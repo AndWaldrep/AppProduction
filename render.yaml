@@ -1,0 +1,10 @@
+# One-click deploy on Render (free plan): Dashboard → New → Blueprint → pick this repo.
+services:
+  - type: web
+    name: kart-clash
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
+    autoDeploy: true
