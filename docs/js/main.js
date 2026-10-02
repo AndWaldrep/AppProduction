@@ -181,8 +181,16 @@ $('joinBtn').onclick = () => joinCode($('codeInput').value.toUpperCase().trim())
 $('codeInput').addEventListener('keydown', (e) => e.key === 'Enter' && $('joinBtn').click());
 
 // Lobby
+// Link to this page, optionally for a room. Works wherever the game is hosted (e.g. /AppProduction/).
+function pageUrl(code) {
+  const q = new URLSearchParams();
+  if (code) q.set('room', code);
+  for (const keep of ['peerserver', 'autopilot']) if (params.has(keep)) q.set(keep, params.get(keep));
+  const search = q.toString().replace(/=(&|$)/g, '$1');
+  return location.origin + location.pathname + (search ? '?' + search : '');
+}
 function inviteUrl() {
-  return `${location.origin}/?room=${app.room.code}`;
+  return pageUrl(app.room.code);
 }
 function inviteText() {
   return `🏁 Race me in Kart Clash! Tap to join my room (${app.room.code}):`;
@@ -257,7 +265,7 @@ function leaveRoom() {
   endRaceLocal();
   app.room = null;
   app.myId = null;
-  history.replaceState(null, '', '/');
+  history.replaceState(null, '', pageUrl());
   show('home');
   $('inviteNote').hidden = true;
   $('joinInviteBtn').hidden = true;
@@ -276,11 +284,14 @@ document.addEventListener('pointerdown', () => sfx.unlock(), { once: true });
 
 // ------------------------------------------------------------------ network events
 
-net.on('status', (s) => ($('conn').hidden = s === 'online' || !net.active));
+net.on('status', (s) => {
+  $('conn').hidden = s === 'online' || !net.active;
+  $('conn').textContent = s === 'searching' ? 'Looking for the race… (your friend needs the game open)' : 'Reconnecting…';
+});
 
 net.on('welcome', (msg) => {
   app.myId = msg.id;
-  history.replaceState(null, '', `/?room=${msg.code}${AUTOPILOT ? '&autopilot' : ''}`);
+  history.replaceState(null, '', pageUrl(msg.code));
 });
 
 net.on('error', (msg) => {
@@ -290,10 +301,10 @@ net.on('error', (msg) => {
     net.connect({ t: 'join', code, name: app.profile.name || 'Racer', color: app.profile.color });
     return;
   }
-  toast(msg.msg || 'Something went wrong');
-  if (!app.room || msg.code === 'noroom') {
-    net.leave();
-    show('home');
+  toast(msg.msg || 'Something went wrong', 5000);
+  if (!app.room || ['noroom', 'hostleft', 'hostgone', 'full', 'network'].includes(msg.code)) {
+    $('conn').hidden = true;
+    leaveRoom();
   }
 });
 

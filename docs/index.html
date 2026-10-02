@@ -11,12 +11,12 @@
   <meta name="description" content="You're invited to a kart race! Tap to join.">
   <meta property="og:title" content="Kart Clash 🏁">
   <meta property="og:description" content="You're invited to a kart race! Tap to join.">
-  <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="icon" href="/icon.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <title>Kart Clash</title>
-  <link rel="stylesheet" href="/style.css">
-  <script type="importmap">{ "imports": { "three": "/vendor/three/three.module.js" } }</script>
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">{ "imports": { "three": "./vendor/three/three.module.js" } }</script>
 </head>
 <body>
   <canvas id="game"></canvas>
@@ -131,6 +131,7 @@
   <div id="toast"></div>
   <div id="conn" hidden>Reconnecting…</div>
   <noscript>Kart Clash needs JavaScript turned on.</noscript>
-  <script type="module" src="/js/main.js"></script>
+  <script src="vendor/peerjs.min.js"></script>
+  <script type="module" src="js/main.js"></script>
 </body>
 </html>

@@ -1,18 +1,19 @@
 {
   "name": "kart-clash",
   "version": "1.0.0",
-  "description": "A small multiplayer kart racing game for phone browsers. Create a room, text the link to a friend, race.",
+  "description": "A small multiplayer kart racing game for phone browsers. Create a race, text the link to a friend, race. Static site for GitHub Pages.",
   "main": "server.js",
   "private": true,
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.mjs",
+    "vendor": "cp node_modules/three/build/three.module.js node_modules/three/build/three.core.js docs/vendor/three/ && cp node_modules/peerjs/dist/peerjs.min.js docs/vendor/"
   },
   "engines": {
     "node": ">=18"
   },
-  "dependencies": {
-    "three": "^0.186.1",
-    "ws": "^8.22.0"
+  "devDependencies": {
+    "peerjs": "^1.5.5",
+    "three": "^0.186.1"
   }
 }
