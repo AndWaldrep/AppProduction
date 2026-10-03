@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { Track, ROLLER_RADIUS } from './track.js';
 import { TRACKS } from './tracks.js';
 import { KartSim, BotDriver, buildKartMesh, poseKartMesh, MAX_SPEED } from './kart.js';
-import { ItemBoxes, Hazards, rollItem, ITEM_ICONS, ROULETTE } from './items.js';
+import { ItemBoxes, Hazards, rollItem, ITEM_ICONS, ITEM_TIPS, ROULETTE, BLAST_RADIUS } from './items.js';
 import { Input } from './input.js';
 import { Net } from './net.js';
 import { sfx } from './audio.js';
@@ -365,6 +365,7 @@ net.on('e', (msg) => {
   if (msg.type === 'box') race.boxes.take(msg.i, now);
   else if (msg.type === 'spawn') race.hazards.add({ ...msg, idx: -1 }, now);
   else if (msg.type === 'hit') race.hazards.remove(msg.hid);
+  else if (msg.type === 'boom') race.hazards.explode(msg.hid);
 });
 
 net.on('fin', (msg) => {
@@ -560,6 +561,14 @@ function rankings(race) {
   return list;
 }
 
+// The first time you get one of the newer items, say what it does.
+const tipsShown = new Set();
+function showItemTip(item) {
+  if (!ITEM_TIPS[item] || tipsShown.has(item)) return;
+  tipsShown.add(item);
+  toast(ITEM_TIPS[item], 3500);
+}
+
 function spawnHazard(ent, kind, x, z, vx, vz) {
   const race = app.race;
   const hid = `${app.myId}-${++race.hidCounter}`;
@@ -588,6 +597,23 @@ function useItem(ent) {
       spawnHazard(ent, 'shell', sim.x + fx * 2.8, sim.z + fz * 2.8, fx * sp, fz * sp);
       break;
     }
+    case 'rocket':
+      sim.rocket();
+      break;
+    case 'glider':
+      sim.glide();
+      break;
+    case 'ghost':
+      sim.ghost();
+      break;
+    case 'tornado':
+      spawnHazard(ent, 'tornado', sim.x + fx * 5, sim.z + fz * 5, 0, 0);
+      break;
+    case 'bomb': {
+      const sp = Math.max(0, sim.speed) * 0.5 + 18;
+      spawnHazard(ent, 'bomb', sim.x + fx * 3, sim.z + fz * 3, fx * sp, fz * sp);
+      break;
+    }
   }
   if (ent.id === app.myId) sfx.useItem(ent.item);
   ent.uses--;
@@ -600,7 +626,15 @@ function botWantsItem(ent, dt, corner, race) {
   const a = ent.itemAge;
   switch (ent.item) {
     case 'star':
+    case 'rocket':
       return a > 0.6;
+    case 'glider':
+      return a > 1 && corner < 0.2;
+    case 'ghost':
+      return a > 1.5;
+    case 'tornado':
+      return a > 1;
+    case 'bomb':
     case 'mushroom':
     case 'mushroom3':
       return a > 1 && corner < 0.15;
@@ -710,7 +744,7 @@ function updateRace(dt, now) {
     }
     const others = [];
     for (const o of race.karts.values()) {
-      if (o !== ent) others.push({ x: o.view.x, y: o.view.y || 0, z: o.view.z, star: !!o.view.st });
+      if (o !== ent) others.push({ x: o.view.x, y: o.view.y || 0, z: o.view.z, star: !!o.view.st || ((o.view.md || 0) & 1) !== 0, ghost: ((o.view.md || 0) & 4) !== 0 });
     }
     sim.update(dt, ctl, others);
 
@@ -727,12 +761,16 @@ function updateRace(dt, now) {
         else if (ev === 'trick') sfx.trick();
         else if (ev === 'fall') sfx.fall();
         else if (ev === 'respawn') sfx.respawn();
+        else if (ev === 'rocket') sfx.rocket();
+        else if (ev === 'rocketEnd') sfx.rocketEnd();
+        else if (ev === 'glide') sfx.glide();
+        else if (ev === 'ghost') sfx.ghost();
       }
     }
     sim.events.length = 0;
 
     // Rolling boulders / snowballs (positions come from the shared race clock)
-    if (started && !sim.falling) {
+    if (started && !sim.falling && sim.rocketTime <= 0 && sim.ghostTime <= 0) {
       for (const r of track.rollers) {
         const p = track.rollerAt(r, tRace);
         const dx = sim.x - p.x;
@@ -767,20 +805,33 @@ function updateRace(dt, now) {
           ent.item = ent.pending;
           ent.uses = ent.item === 'mushroom3' ? 3 : 1;
           ent.itemAge = 0;
-          if (isMe) sfx.itemReady();
+          if (isMe) {
+            sfx.itemReady();
+            showItemTip(ent.item);
+          }
         } else if (isMe && now - race.lastTick > 90) {
           race.lastTick = now;
           sfx.roulette();
         }
       }
       const wants = isMe && !ent.finished ? inp.useItem : ent.item && botWantsItem(ent, dt, corner, race);
-      if (wants && ent.item && sim.spinTime <= 0 && !sim.falling) useItem(ent);
+      if (wants && ent.item && sim.spinTime <= 0 && (!sim.falling || ent.item === 'rocket')) useItem(ent);
 
       // Bananas and shells
-      const hz = race.hazards.collide(ent.id, sim.x, sim.y, sim.z, now);
+      const hz = sim.ghostTime > 0 ? null : race.hazards.collide(ent.id, sim.x, sim.y, sim.z, now);
       if (hz) {
-        net.send({ t: 'e', type: 'hit', hid: hz.hid });
-        if (sim.hit() && isMe) {
+        let hurt = false;
+        if (hz.effect === 'spin') {
+          net.send({ t: 'e', type: 'hit', hid: hz.h.hid });
+          hurt = sim.hit();
+        } else if (hz.effect === 'boom') {
+          net.send({ t: 'e', type: 'boom', hid: hz.h.hid });
+          race.hazards.explode(hz.h.hid);
+        } else if (hz.effect === 'launch') {
+          hurt = sim.blast(14);
+          if (hurt && isMe) sfx.tornado();
+        }
+        if (hurt && isMe) {
           sfx.hit();
           if (navigator.vibrate) navigator.vibrate(120);
         }
@@ -833,6 +884,7 @@ function updateRace(dt, now) {
         y: +v.y.toFixed(2),
         pt: +v.pt.toFixed(2),
         tr: +v.tr.toFixed(2),
+        md: v.md,
         s: +v.s.toFixed(1),
         p: +v.p.toFixed(1),
         sp: v.sp,
@@ -857,7 +909,20 @@ function updateRace(dt, now) {
     if (ent.view.y === undefined) ent.view.y = ent.view.gy ?? 0;
   }
 
-  race.hazards.update(dt, now);
+  const booms = race.hazards.update(dt, now);
+  for (const b of booms) {
+    const meV = race.karts.get(app.myId)?.view;
+    const d = meV ? Math.hypot(meV.x - b.x, meV.z - b.z) : 999;
+    sfx.boom(Math.max(0.15, 1 - d / 80));
+    for (const ent of race.karts.values()) {
+      const k = ent.sim;
+      if (!k || !started) continue;
+      if (Math.hypot(k.x - b.x, k.z - b.z, (k.y - b.y) * 0.5) < BLAST_RADIUS && k.blast(13) && ent.id === app.myId) {
+        sfx.hit();
+        if (navigator.vibrate) navigator.vibrate(200);
+      }
+    }
+  }
   race.boxes.update(dt, now);
 
   const time = now / 1000;
@@ -881,8 +946,8 @@ function updateRace(dt, now) {
     drawMinimap(race);
     if (me.sim) {
       const k = me.sim;
-      sfx.kart({ on: true, speed: k.speed / MAX_SPEED, boost: k.boostTime > 0, drift: k.driftTier, drifting: !!k.driftDir, offroad: k.offroad, air: k.air });
-      const star = k.starTime > 0 && !me.finished;
+      sfx.kart({ on: true, speed: k.speed / MAX_SPEED, boost: k.boostTime > 0 || k.rocketTime > 0, drift: k.driftTier, drifting: !!k.driftDir, offroad: k.offroad, air: k.air });
+      const star = (k.starTime > 0 || k.rocketTime > 0) && !me.finished;
       if (star !== race.starMusic && started && !me.finished) {
         race.starMusic = star;
         sfx.music(star ? 'star' : race.song);
@@ -898,19 +963,21 @@ function updateChaseCamera(me, dt) {
   const portrait = camera.aspect < 1;
   const fx = Math.sin(v.h);
   const fz = Math.cos(v.h);
-  const back = portrait ? 8.5 : 7;
-  const up = portrait ? 4 : 3.2;
+  const md = v.md || 0;
+  // Pull back for the rocket ride and the glider so you can see where you're going.
+  const back = (portrait ? 8.5 : 7) + (md & 1 ? 1.5 : 0) + (md & 2 ? 2 : 0);
+  const up = (portrait ? 4 : 3.2) + (md & 1 ? 1.2 : 0) + (md & 2 ? 1.5 : 0);
   // Follow height loosely, but don't dive into a gap after a falling kart.
   const ky = Math.max(v.y || 0, (v.gy ?? v.y ?? 0) - 1, -4);
   if (race.camY === null) race.camY = ky;
   race.camY += (ky - race.camY) * (1 - Math.exp(-dt * 5));
   const target = new THREE.Vector3(v.x - fx * back, race.camY + up + (v.hop || 0) * 0.4, v.z - fz * back);
   if (!race.camPos) race.camPos = target.clone();
-  race.camPos.lerp(target, 1 - Math.exp(-dt * 7));
+  race.camPos.lerp(target, 1 - Math.exp(-dt * (md & 1 ? 16 : 7)));
   camera.position.copy(race.camPos);
   camera.lookAt(v.x + fx * 5, race.camY + 1.3, v.z + fz * 5);
   const baseFov = portrait ? 80 : 65;
-  const speedFov = Math.max(0, (v.s || 0) - MAX_SPEED * 0.8) * 0.6;
+  const speedFov = Math.min(16, Math.max(0, (v.s || 0) - MAX_SPEED * 0.8) * 0.6);
   const fov = baseFov + speedFov;
   if (Math.abs(camera.fov - fov) > 0.05) {
     camera.fov += (fov - camera.fov) * Math.min(1, dt * 4);

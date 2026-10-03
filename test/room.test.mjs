@@ -64,8 +64,10 @@ test('create, invite, race, finish and results', () => {
   assert.ok(start.startAt > Date.now());
 
   // State relay: host may send its own kart and the bots, but not the guest's kart.
-  host.say({ t: 's', k: [{ id: hw.id, ts: 1, x: 1, z: 2, h: 0, p: 5 }, { id: 'bot0', ts: 1, x: 3, z: 4, p: 7 }, { id: gw.id, x: 99 }] });
-  assert.deepStrictEqual(guest.take('s').k.map((k) => k.id), [hw.id, 'bot0']);
+  host.say({ t: 's', k: [{ id: hw.id, ts: 1, x: 1, z: 2, h: 0, p: 5, md: 5 }, { id: 'bot0', ts: 1, x: 3, z: 4, p: 7, md: 99 }, { id: gw.id, x: 99 }] });
+  const relayed = guest.take('s').k;
+  assert.deepStrictEqual(relayed.map((k) => k.id), [hw.id, 'bot0']);
+  assert.deepStrictEqual(relayed.map((k) => k.md), [5, 3], 'power-up flags are relayed (and kept to known bits)');
   guest.say({ t: 's', k: [{ id: 'bot1', x: 5 }] });
   assert.ok(!host.inbox.some((m) => m.t === 's'), 'guests cannot move CPU karts');
 

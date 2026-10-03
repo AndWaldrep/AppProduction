@@ -356,6 +356,11 @@ class Sound {
     } else if (kind === 'shell') {
       this.tone(1100, 0.2, { vol: 0.16, slide: 180 });
       this.noise(0.12, { vol: 0.25, f: 3000 });
+    } else if (kind === 'tornado') {
+      this.noise(0.9, { vol: 0.35, f: 300, slide: 1800, q: 3 });
+    } else if (kind === 'bomb') {
+      this.tone(260, 0.15, { type: 'triangle', vol: 0.3, slide: 520 });
+      this.noise(0.08, { vol: 0.2, type: 'lowpass', f: 600 });
     } else if (kind === 'star') {
       this.notes([523, 659, 784, 1046, 1318, 1568, 2093], { vol: 0.12, gap: 0.05, dur: 0.12 });
     }
@@ -397,6 +402,30 @@ class Sound {
   roller() {
     this.tone(90, 0.35, { type: 'sine', vol: 0.5, slide: 35 });
     this.noise(0.3, { vol: 0.4, type: 'lowpass', f: 400 });
+  }
+  rocket() {
+    this.notes([392, 523, 659, 784, 1046], { type: 'sawtooth', vol: 0.12, gap: 0.05, dur: 0.12 });
+    this.noise(1.2, { vol: 0.45, f: 200, slide: 2400, q: 1 });
+    this.tone(80, 1.0, { type: 'sawtooth', vol: 0.2, slide: 160 });
+  }
+  rocketEnd() {
+    this.noise(0.5, { vol: 0.3, f: 2000, slide: 300 });
+    this.tone(500, 0.3, { type: 'triangle', vol: 0.15, slide: 250 });
+  }
+  glide() {
+    this.noise(0.9, { vol: 0.4, f: 300, slide: 3500, q: 1.2 });
+    this.notes([523, 784, 1046, 1568], { type: 'triangle', vol: 0.14, gap: 0.08, dur: 0.25 });
+  }
+  ghost() {
+    this.tone(660, 1.2, { type: 'sine', vol: 0.18, slide: 330, verb: true });
+    this.tone(990, 1.2, { type: 'sine', vol: 0.1, slide: 495, delay: 0.1, verb: true });
+  }
+  tornado() {
+    this.noise(0.8, { vol: 0.4, f: 400, slide: 2200, q: 4 });
+  }
+  boom(vol = 1) {
+    this.noise(1.2, { vol: 0.8 * vol, type: 'lowpass', f: 1200, slide: 80 });
+    this.tone(90, 0.8, { type: 'sine', vol: 0.7 * vol, slide: 30 });
   }
   lap() {
     this.notes([523, 659, 784, 1046], { type: 'triangle', vol: 0.2, gap: 0.09, dur: 0.16 });

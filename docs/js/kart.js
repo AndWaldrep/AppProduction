@@ -5,18 +5,22 @@ const OFFROAD_MAX = 13;
 const BOOST_SPEED = 42;
 const STAR_SPEED = 36;
 const REVERSE_MAX = -9;
+const ROCKET_SPEED = 55;
+const ROCKET_TIME = 6;
+const GHOST_TIME = 5;
+const GLIDE_TIME = 6; // longest a glide can last
 const KART_RADIUS = 1.15;
 
 // ------------------------------------------------------------------ model
 
 const wheelGeo = new THREE.CylinderGeometry(0.42, 0.42, 0.38, 12);
 wheelGeo.rotateZ(Math.PI / 2);
-const wheelMat = new THREE.MeshLambertMaterial({ color: '#1b1b1b' });
-const hubMat = new THREE.MeshLambertMaterial({ color: '#cfd8dc' });
+const sharedWheel = new THREE.MeshLambertMaterial({ color: '#1b1b1b' });
+const sharedHub = new THREE.MeshLambertMaterial({ color: '#cfd8dc' });
 const hubGeo = new THREE.CylinderGeometry(0.18, 0.18, 0.4, 8);
 hubGeo.rotateZ(Math.PI / 2);
-const darkMat = new THREE.MeshLambertMaterial({ color: '#263238' });
-const skinMat = new THREE.MeshLambertMaterial({ color: '#ffcc99' });
+const sharedDark = new THREE.MeshLambertMaterial({ color: '#263238' });
+const sharedSkin = new THREE.MeshLambertMaterial({ color: '#ffcc99' });
 const shadowTex = (() => {
   const c = document.createElement('canvas');
   c.width = c.height = 64;
@@ -61,6 +65,11 @@ export function buildKartMesh(color, name) {
   const body = new THREE.Group(); // tilts / spins / hops; root only moves
   root.add(body);
   const paint = new THREE.MeshLambertMaterial({ color });
+  // Each kart gets its own copies so one kart can turn see-through (ghost) on its own.
+  const darkMat = sharedDark.clone();
+  const skinMat = sharedSkin.clone();
+  const wheelMat = sharedWheel.clone();
+  const hubMat = sharedHub.clone();
 
   const chassis = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.45, 2.7), paint);
   chassis.position.y = 0.55;
@@ -150,13 +159,72 @@ export function buildKartMesh(color, name) {
   shadow.position.y = 0.03;
   root.add(shadow);
 
+  // Rocket shell (shown instead of the kart while riding a rocket)
+  const rocket = new THREE.Group();
+  const shellMat = new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.25 });
+  const tube = new THREE.Mesh(new THREE.CylinderGeometry(1.25, 1.25, 3.6, 16), shellMat);
+  tube.rotation.x = Math.PI / 2;
+  rocket.add(tube);
+  const tip = new THREE.Mesh(new THREE.ConeGeometry(1.25, 2.2, 16), new THREE.MeshLambertMaterial({ color: '#eceff1' }));
+  tip.rotation.x = Math.PI / 2;
+  tip.position.z = 2.9;
+  rocket.add(tip);
+  const finMat = new THREE.MeshLambertMaterial({ color: '#d50000' });
+  for (let k = 0; k < 4; k++) {
+    const fin = new THREE.Mesh(new THREE.BoxGeometry(0.15, 1.3, 1.4), finMat);
+    const a = (k / 4) * Math.PI * 2;
+    fin.position.set(Math.cos(a) * 1.5, Math.sin(a) * 1.5, -1.3);
+    fin.rotation.z = a + Math.PI / 2;
+    rocket.add(fin);
+  }
+  const eye = new THREE.Mesh(new THREE.SphereGeometry(0.45, 10, 8), new THREE.MeshLambertMaterial({ color: '#80d8ff', emissive: '#0091ea', emissiveIntensity: 0.4 }));
+  eye.position.set(0, 0.95, 1.2);
+  rocket.add(eye);
+  const rocketFlame = new THREE.Mesh(
+    new THREE.ConeGeometry(1.0, 4, 12),
+    new THREE.MeshBasicMaterial({ color: '#ff6d00', transparent: true, opacity: 0.85 })
+  );
+  rocketFlame.rotation.x = -Math.PI / 2;
+  rocketFlame.position.z = -3.8;
+  rocket.add(rocketFlame);
+  rocket.position.y = 1.4;
+  rocket.visible = false;
+  root.add(rocket);
+
+  // Hang-glider wing (shown while gliding)
+  const wings = new THREE.Group();
+  const shape = new THREE.Shape();
+  shape.moveTo(0, 2.2);
+  shape.lineTo(4, -1.4);
+  shape.lineTo(0, -0.6);
+  shape.lineTo(-4, -1.4);
+  shape.closePath();
+  const sail = new THREE.Mesh(new THREE.ShapeGeometry(shape), new THREE.MeshLambertMaterial({ color, side: THREE.DoubleSide }));
+  sail.rotation.x = -Math.PI / 2;
+  wings.add(sail);
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.05, 3.6), new THREE.MeshLambertMaterial({ color: '#ffffff' }));
+  stripe.position.set(0, 0.03, -0.6);
+  wings.add(stripe);
+  for (const sx of [-0.5, 0.5]) {
+    const strut = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.6, 5), darkMat);
+    strut.position.set(sx, -0.8, 0);
+    wings.add(strut);
+  }
+  wings.position.y = 3.0;
+  wings.visible = false;
+  body.add(wings);
+
+  // Materials that fade out when the kart is a ghost.
+  const mats = new Set();
+  body.traverse((o) => o.isMesh && !o.material.transparent && mats.add(o.material));
+
   let tag = null;
   if (name) {
     tag = nameTag(name, color);
     root.add(tag);
   }
 
-  root.userData = { body, wheels, frontPivots, flame, sparks, sparkMat, paint, baseColor: new THREE.Color(color), tag, shadow };
+  root.userData = { body, wheels, frontPivots, flame, sparks, sparkMat, paint, baseColor: new THREE.Color(color), tag, shadow, rocket, rocketFlame, wings, mats: [...mats], ghost: false };
   return root;
 }
 
@@ -193,6 +261,29 @@ export function poseKartMesh(mesh, v, time, dt) {
   } else if (!u.paint.color.equals(u.baseColor)) {
     u.paint.color.copy(u.baseColor);
   }
+  // Power-up looks: rocket shell, glider wing, see-through ghost.
+  const md = v.md || 0;
+  const rocket = (md & 1) !== 0;
+  u.rocket.visible = rocket;
+  u.body.visible = !rocket;
+  if (rocket) {
+    u.rocket.rotation.z += dt * 5;
+    u.rocketFlame.scale.set(1, 0.8 + Math.random() * 0.6, 1);
+  }
+  u.wings.visible = (md & 2) !== 0;
+  const ghost = (md & 4) !== 0;
+  if (ghost !== u.ghost) {
+    u.ghost = ghost;
+    for (const m of u.mats) {
+      m.transparent = ghost;
+      m.depthWrite = !ghost;
+      m.opacity = 1;
+      m.needsUpdate = true;
+    }
+    if (u.tag) u.tag.material.opacity = ghost ? 0.4 : 1;
+  }
+  if (ghost) for (const m of u.mats) m.opacity = 0.22 + 0.1 * Math.sin(time * 14);
+
   // Shadow stays on the ground, shrinking as the kart gets higher.
   const gy = v.gy;
   u.shadow.visible = gy !== null && gy !== undefined && y - gy < 25;
@@ -235,6 +326,10 @@ export class KartSim {
     this.trick = false;
     this.trickT = 0;
     this.onRamp = false;
+    // Power-ups
+    this.rocketTime = 0;
+    this.glideTime = 0;
+    this.ghostTime = 0;
     const n = track.nearest(this.x, this.z);
     this.idx = n.idx;
     this.lat = n.lat;
@@ -264,8 +359,50 @@ export class KartSim {
     this.events.push('star');
   }
 
+  // 🚀 Turn into a rocket that drives itself down the track.
+  rocket() {
+    this.rocketTime = ROCKET_TIME;
+    this.falling = false;
+    this.air = false;
+    this.spinTime = 0;
+    this.trick = false;
+    this.events.push('rocket');
+  }
+
+  // 🪂 Launch into the sky and glide.
+  glide() {
+    if (this.falling) return;
+    this.air = true;
+    this.airTime = 0;
+    this.vy = 21;
+    this.glideTime = GLIDE_TIME;
+    this.speed = Math.max(this.speed, 34);
+    this.driftDir = 0;
+    this.events.push('glide');
+  }
+
+  // 👻 Pass through karts, items and obstacles for a while.
+  ghost() {
+    this.ghostTime = GHOST_TIME;
+    this.events.push('ghost');
+  }
+
+  get invincible() {
+    return this.starTime > 0 || this.rocketTime > 0 || this.ghostTime > 0;
+  }
+
+  // Bomb blasts and tornadoes: spin out and get thrown into the air.
+  blast(vy = 12) {
+    if (!this.hit()) return false;
+    this.air = true;
+    this.airTime = 0;
+    this.vy = vy;
+    this.glideTime = 0;
+    return true;
+  }
+
   hit() {
-    if (this.starTime > 0 || this.spinTime > 0 || this.falling) return false;
+    if (this.invincible || this.spinTime > 0 || this.falling) return false;
     this.spinTime = 1.3;
     this.driftDir = 0;
     this.driftCharge = 0;
@@ -305,6 +442,11 @@ export class KartSim {
     this.boostTime = Math.max(0, this.boostTime - dt);
     this.starTime = Math.max(0, this.starTime - dt);
     this.spinTime = Math.max(0, this.spinTime - dt);
+    this.ghostTime = Math.max(0, this.ghostTime - dt);
+    if (this.rocketTime > 0) {
+      this.updateRocket(dt);
+      return;
+    }
 
     const canDrive = this.spinTime <= 0 && !this.falling;
     const steerIn = canDrive ? input.steer : 0;
@@ -368,7 +510,7 @@ export class KartSim {
     if (!this.air && this.boostTime <= 0) this.speed -= t.slopeAt(this.idx) * 16 * dt;
 
     // ---- steering
-    const speedFactor = Math.min(1, Math.abs(this.speed) / 9) * (this.air ? 0.6 : 1);
+    const speedFactor = Math.min(1, Math.abs(this.speed) / 9) * (this.air && this.glideTime <= 0 ? 0.6 : 1);
     const rate = 2.1 - 0.7 * (Math.max(0, this.speed) / MAX_SPEED);
     let turn;
     if (this.driftDir) {
@@ -384,10 +526,10 @@ export class KartSim {
     this.x += (Math.sin(this.h) * this.speed + this.kx) * dt;
     this.z += (Math.cos(this.h) * this.speed + this.kz) * dt;
 
-    // ---- other karts
-    if (others) {
+    // ---- other karts (ghosts pass straight through)
+    if (others && this.ghostTime <= 0) {
       for (const o of others) {
-        if (Math.abs((o.y || 0) - this.y) > 2) continue;
+        if (o.ghost || Math.abs((o.y || 0) - this.y) > 2) continue;
         const dx = this.x - o.x;
         const dz = this.z - o.z;
         const d = Math.hypot(dx, dz);
@@ -462,7 +604,15 @@ export class KartSim {
       }
     } else if (this.air) {
       this.airTime += dt;
-      this.vy -= GRAVITY * dt;
+      if (this.glideTime > 0) {
+        // Gliding: rise on the launch, then float down slowly while keeping speed.
+        this.glideTime -= dt;
+        this.vy -= (this.vy > 0 ? GRAVITY * 0.8 : 6) * dt;
+        if (this.vy < -2.6) this.vy = -2.6;
+        this.speed = Math.max(this.speed, 34);
+      } else {
+        this.vy -= GRAVITY * dt;
+      }
       this.y += this.vy * dt;
       if (!overGap && this.y <= gh) {
         if (gh - this.y < 1.8) this.land(gh);
@@ -501,13 +651,7 @@ export class KartSim {
       }
     }
 
-    let delta = n.frac - this.lastFrac;
-    if (delta > t.N / 2) delta -= t.N;
-    if (delta < -t.N / 2) delta += t.N;
-    this.progress += delta;
-    this.lastFrac = n.frac;
-    this.idx = n.idx;
-    this.lat = n.lat;
+    this.track_(n);
   }
 
   takeOff(y) {
@@ -521,6 +665,7 @@ export class KartSim {
 
   land(gh) {
     if (this.airTime > 0.3) this.events.push('land');
+    this.glideTime = 0;
     this.air = false;
     this.y = gh;
     this.vy = 0;
@@ -532,6 +677,7 @@ export class KartSim {
   }
 
   startFall() {
+    this.glideTime = 0;
     this.falling = true;
     this.fallTime = 0;
     this.air = true;
@@ -541,7 +687,75 @@ export class KartSim {
     this.events.push('fall');
   }
 
+  // Rocket ride: steer along the middle of the track at full speed, hovering over
+  // everything (gaps included), then drop back onto the road.
+  updateRocket(dt) {
+    const t = this.track;
+    this.rocketTime -= dt;
+    this.boostTime = 0;
+    this.driftDir = 0;
+    this.driftCharge = 0;
+    this.trick = false;
+    this.glideTime = 0;
+    this.steer *= 0.8;
+    const target = t.pointAt(this.idx + 12, 0);
+    let diff = Math.atan2(target.x - this.x, target.z - this.z) - this.h;
+    diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+    this.h += diff * Math.min(1, dt * 5);
+    this.speed = ROCKET_SPEED;
+    this.kx = this.kz = 0;
+    this.x += Math.sin(this.h) * this.speed * dt;
+    this.z += Math.cos(this.h) * this.speed * dt;
+    const n = t.nearest(this.x, this.z, this.idx);
+    const limit = t.wallLat - KART_RADIUS;
+    if (Math.abs(n.lat) > limit) {
+      const s = Math.sign(n.lat);
+      this.x -= t.nx[n.idx] * s * (Math.abs(n.lat) - limit);
+      this.z -= t.nz[n.idx] * s * (Math.abs(n.lat) - limit);
+    }
+    const hover = t.heightAt(n.frac) + 1.4;
+    this.y += (hover - this.y) * Math.min(1, dt * 8);
+    this.vy = 0;
+    this.air = false;
+    this.falling = false;
+    this.offroad = false;
+    const gap = t.isGap(n.frac);
+    this.groundY = gap ? null : t.heightAt(n.frac);
+    if (!gap && !t.ramp[n.idx]) this.lastSafeIdx = n.idx;
+    if (this.rocketTime <= 0) {
+      // Never drop out over a gap or right before one.
+      let clear = true;
+      for (let k = 0; k < 12; k++) if (t.gap[t.wrap(n.idx + k)]) clear = false;
+      if (!clear) {
+        this.rocketTime = 0.05;
+      } else {
+        this.rocketTime = 0;
+        this.speed = BOOST_SPEED;
+        this.boostTime = 0.6;
+        this.air = true;
+        this.airTime = 0;
+        this.vy = 3;
+        this.events.push('rocketEnd');
+      }
+    }
+    this.track_(n);
+  }
+
+  // Lap progress from the nearest centre-line sample.
+  track_(n) {
+    const t = this.track;
+    let delta = n.frac - this.lastFrac;
+    if (delta > t.N / 2) delta -= t.N;
+    if (delta < -t.N / 2) delta += t.N;
+    this.progress += delta;
+    this.lastFrac = n.frac;
+    this.idx = n.idx;
+    this.lat = n.lat;
+  }
+
   pitch() {
+    if (this.rocketTime > 0) return 0.05;
+    if (this.glideTime > 0) return 0.12;
     if (this.falling) return Math.max(-0.9, -0.3 - this.fallTime);
     if (this.air) return Math.max(-0.5, Math.min(0.5, Math.atan2(this.vy, Math.max(8, this.speed))));
     return Math.atan(this.track.slopeAt(this.idx));
@@ -559,6 +773,7 @@ export class KartSim {
       sp: this.spinTime > 0 ? 1 : 0,
       st: this.starTime > 0 ? 1 : 0,
       b: this.boostTime > 0 || this.starTime > 0 ? 1 : 0,
+      md: (this.rocketTime > 0 ? 1 : 0) | (this.glideTime > 0 && this.air ? 2 : 0) | (this.ghostTime > 0 ? 4 : 0),
       dd: this.driftDir,
       dc: this.driftTier,
       hop: this.hop,

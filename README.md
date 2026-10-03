@@ -12,8 +12,15 @@ phone) to join. There's nothing to install, and it runs on free GitHub Pages.
 - Original music for each track (it speeds up on the final lap) and
   synthesized sound effects, with separate 🎵 and 🔊 toggles
 - Drifting with blue and orange mini-turbo boosts, boost pads
-- Item boxes: 🍌 banana, 🐢 shell, 🍄 mushroom, 🍄×3 triple mushroom, ⭐ star
-  (racers further back get better items)
+- Item boxes (racers further back get better items):
+  - 🍌 banana, 🐢 shell, 🍄 mushroom, 🍄×3 triple mushroom, ⭐ star
+  - 🚀 **Rocket**: turn into a rocket that flies down the track on its own
+    (over gaps too) and knocks aside anyone in the way
+  - 🪂 **Glider**: launch into the sky and glide over everything
+  - 🌪️ **Tornado**: send a twister racing up the track; it flings karts into
+    the air
+  - 💣 **Bomb**: lob it ahead; it explodes after a moment or when touched
+  - 👻 **Ghost**: go see-through and pass through karts, items and boulders
 - Reconnects on its own if a phone locks or loses signal mid-race
 
 ## How to play

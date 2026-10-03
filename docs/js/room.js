@@ -291,7 +291,7 @@ export class Room {
           const clean = {
             id: k.id, ts: num(k.ts), x: num(k.x), z: num(k.z), h: num(k.h), s: num(k.s), p: num(k.p),
             sp: num(k.sp), st: num(k.st), b: num(k.b), dd: num(k.dd), dc: num(k.dc), hop: num(k.hop),
-            y: num(k.y), pt: num(k.pt), tr: num(k.tr),
+            y: num(k.y), pt: num(k.pt), tr: num(k.tr), md: num(k.md) & 7,
           };
           this.race.kstate[k.id] = clean;
           out.push(clean);
