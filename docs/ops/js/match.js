@@ -206,6 +206,12 @@ export class Match {
       let ctl = isMe ? myCtl || {} : e.ai.think(dt, sim, wpn, { ents: all, mode: this.mode, team: e.team });
       if (!started) ctl = { ads: ctl.ads };
       sim.update(dt, { ...ctl, speedMul: wpn.w.move });
+      if (sim.recoil) {
+        // The kick settles back down, so holding the trigger climbs a little and then holds steady.
+        const back = sim.recoil * (1 - Math.exp(-dt * 6));
+        sim.recoil -= back;
+        sim.pitch -= back;
+      }
       for (const ev of sim.events) if (isMe) this.events.push({ type: ev });
       sim.events.length = 0;
       const ads = !!ctl.ads && !sim.sprinting;
@@ -282,7 +288,9 @@ export class Match {
     e.lastFired = this.now();
     // Recoil kicks the aim up (bots fight it like anyone else).
     const k = w.recoil * (1 - 0.45 * wpn.adsT);
-    sim.pitch = Math.min(1.4, sim.pitch + k * (0.75 + this.rnd() * 0.5));
+    const up = Math.min(1.4 - sim.pitch, k * (0.75 + this.rnd() * 0.5));
+    sim.pitch += up;
+    sim.recoil = (sim.recoil || 0) + up;
     sim.yaw += (this.rnd() - 0.5) * k * 0.6;
     this.alertBots(sim.x, sim.z, e);
   }

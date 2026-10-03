@@ -289,7 +289,7 @@ input[type='range'] { padding: 0; accent-color: var(--accent); }
 #btnCrouch { right: calc(100px + var(--safe-r)); bottom: calc(10px + var(--safe-b)); font-size: 24px; }
 #btnReload { right: calc(28px + var(--safe-r)); bottom: 66%; width: 50px; height: 50px; font-size: 24px; }
 #btnNade { right: calc(96px + var(--safe-r)); bottom: 60%; width: 52px; height: 52px; }
-#btnFireL { left: calc(28px + var(--safe-l)); bottom: 52%; }
+#btnFireL { left: calc(28px + var(--safe-l)); bottom: 40%; }
 
 @media (orientation: portrait) {
   #btnFire { right: calc(20px + var(--safe-r)); bottom: calc(150px + var(--safe-b)); width: 78px; height: 78px; }
@@ -511,6 +511,8 @@ input[type='range'] { padding: 0; accent-color: var(--accent); }
 table { width: 100%; border-collapse: collapse; font-size: 15px; }
 th { text-align: left; color: var(--muted); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; padding: 4px 6px; }
 td { padding: 6px; border-top: 1px solid var(--line); }
+td:first-child, th:first-child { width: 28px; }
+.setting > span { white-space: nowrap; }
 td:nth-child(n + 3), th:nth-child(n + 3) { text-align: center; width: 44px; font-variant-numeric: tabular-nums; }
 tr.me td { background: rgba(255, 176, 0, 0.14); font-weight: 800; }
 tr.gap td { border: none; height: 10px; padding: 0; }

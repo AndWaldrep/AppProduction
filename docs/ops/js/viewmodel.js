@@ -127,6 +127,9 @@ export class ViewModel {
 
   resize(aspect) {
     this.camera.aspect = aspect;
+    // An upright phone is narrow: widen the view a bit and hold the gun lower and closer to the middle.
+    this.portrait = aspect < 1;
+    this.camera.fov = this.portrait ? 74 : 58;
     this.camera.updateProjectionMatrix();
   }
 
@@ -145,7 +148,7 @@ export class ViewModel {
     const bobAmt = (s.sprint ? 0.035 : 0.014 * speed + 0.002) * (1 - ads * 0.85);
     this.swayX += (-s.dyaw * 0.6 - this.swayX) * Math.min(1, dt * 8);
     this.swayY += (s.dpitch * 0.6 - this.swayY) * Math.min(1, dt * 8);
-    const hip = { x: 0.17, y: -0.16, z: -0.6 };
+    const hip = this.portrait ? { x: 0.09, y: -0.21, z: -0.62 } : { x: 0.17, y: -0.16, z: -0.6 };
     const aim = { x: 0, y: 0, z: -0.55 };
     let x = hip.x + (aim.x - hip.x) * ads;
     let y = hip.y + (aim.y - hip.y) * ads;

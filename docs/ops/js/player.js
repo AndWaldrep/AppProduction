@@ -51,6 +51,7 @@ export class PlayerSim {
     this.crouch = 0; // 0 standing .. 1 crouched
     this.sprinting = false;
     this.speed = 0;
+    this.recoil = 0;
     this.events = [];
   }
 
