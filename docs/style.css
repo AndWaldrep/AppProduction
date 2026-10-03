@@ -156,7 +156,7 @@ button.big:active { transform: translateY(3px); box-shadow: none; }
 .rtime { font-variant-numeric: tabular-nums; color: var(--muted); }
 
 .setting { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-weight: 700; }
-.seg { display: flex; gap: 6px; }
+.seg { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 .seg button { padding: 8px 12px; font-size: 14px; }
 .seg button.selected { background: var(--accent2); color: #222; }
 .stepper { display: flex; align-items: center; gap: 12px; }
@@ -209,16 +209,25 @@ button.big:active { transform: translateY(3px); box-shadow: none; }
   opacity: 0.9;
 }
 
-#muteBtn {
-  position: absolute;
-  top: calc(164px + var(--safe-t));
-  right: calc(12px + var(--safe-r));
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  font-size: 20px;
-  background: rgba(0, 0, 0, 0.3);
+#audioBtns {
+  position: fixed;
+  top: calc(10px + var(--safe-t));
+  right: calc(10px + var(--safe-r));
+  display: flex;
+  gap: 6px;
+  z-index: 15;
 }
+#audioBtns button {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  font-size: 18px;
+  background: rgba(0, 0, 0, 0.35);
+}
+#audioBtns button.off { opacity: 0.45; }
+#audioBtns #musicBtn.off { text-decoration: line-through; }
+/* In a race the buttons sit under the minimap. */
+body.racing #audioBtns { top: calc(164px + var(--safe-t)); right: calc(12px + var(--safe-r)); }
 
 #banner {
   position: absolute;
@@ -336,7 +345,7 @@ button.big:active { transform: translateY(3px); box-shadow: none; }
   #time { font-size: 15px; }
   #itemBox { margin-right: 120px; width: 58px; height: 58px; }
   #minimap { width: 110px; height: 110px; }
-  #muteBtn { top: calc(124px + var(--safe-t)); }
+  body.racing #audioBtns { top: calc(124px + var(--safe-t)); }
   #controls { height: 45%; }
   #buttons { width: 190px; height: 190px; }
   .ctl.drift { width: 96px; height: 96px; }
@@ -350,7 +359,8 @@ button.big:active { transform: translateY(3px); box-shadow: none; }
 @media (max-height: 430px) {
   #minimap { width: 112px; height: 112px; }
   #lapBox { margin-right: 120px; }
-  #muteBtn { top: calc(126px + var(--safe-t)); width: 34px; height: 34px; font-size: 16px; }
+  body.racing #audioBtns { top: calc(126px + var(--safe-t)); }
+  #audioBtns button { width: 34px; height: 34px; font-size: 16px; }
   #posBox { font-size: 40px; }
   #itemBox { width: 58px; height: 58px; }
   .card { padding: 14px; gap: 8px; }

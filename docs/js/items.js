@@ -56,10 +56,10 @@ export class ItemBoxes {
     const mat = new THREE.MeshLambertMaterial({ map: boxTexture(), transparent: true, opacity: 0.88, emissive: '#ffffff', emissiveIntensity: 0.25 });
     this.boxes = track.boxes.map((b, i) => {
       const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.set(b.x, 1.4, b.z);
+      mesh.position.set(b.x, b.y + 1.4, b.z);
       mesh.rotation.set(0.6, i, 0.4);
       this.group.add(mesh);
-      return { x: b.x, z: b.z, mesh, respawnAt: 0 };
+      return { x: b.x, y: b.y, z: b.z, mesh, respawnAt: 0 };
     });
     scene.add(this.group);
   }
@@ -71,7 +71,7 @@ export class ItemBoxes {
       if (active) {
         b.mesh.rotation.y += dt * 1.6;
         b.mesh.rotation.x += dt * 0.7;
-        b.mesh.position.y = 1.4 + Math.sin(now / 300 + b.x) * 0.2;
+        b.mesh.position.y = b.y + 1.4 + Math.sin(now / 300 + b.x) * 0.2;
         const grow = Math.min(1, (now - b.respawnAt) / 300);
         b.mesh.scale.setScalar(grow);
       }
@@ -79,10 +79,10 @@ export class ItemBoxes {
   }
 
   // Returns the index of a box the kart just drove through, or -1.
-  touch(x, z, now) {
+  touch(x, y, z, now) {
     for (let i = 0; i < this.boxes.length; i++) {
       const b = this.boxes[i];
-      if (now < b.respawnAt) continue;
+      if (now < b.respawnAt || Math.abs(y - b.y) > 3) continue;
       if ((b.x - x) ** 2 + (b.z - z) ** 2 < 2.4 * 2.4) {
         b.respawnAt = now + BOX_RESPAWN_MS;
         return i;
@@ -123,6 +123,10 @@ export class Hazards {
 
   add({ hid, kind, x, z, vx = 0, vz = 0, owner, idx = -1 }, now) {
     if (this.list.has(hid)) return;
+    const n = this.track.nearest(x, z, idx);
+    if (this.track.isGap(n.frac)) return; // dropped over a gap: it falls in
+    idx = n.idx;
+    const y = this.track.heightAt(n.frac);
     const mesh = new THREE.Group();
     if (kind === 'banana') {
       const b = new THREE.Mesh(bananaGeo, bananaMat);
@@ -136,9 +140,9 @@ export class Hazards {
       rim.position.y = 0.25;
       mesh.add(rim);
     }
-    mesh.position.set(x, 0, z);
+    mesh.position.set(x, y, z);
     this.scene.add(mesh);
-    this.list.set(hid, { hid, kind, x, z, vx, vz, owner, born: now, bounces: 0, mesh, idx });
+    this.list.set(hid, { hid, kind, x, y, z, vx, vz, owner, born: now, bounces: 0, mesh, idx });
     if (kind === 'banana') {
       const bananas = [...this.list.values()].filter((h) => h.kind === 'banana');
       if (bananas.length > MAX_BANANAS) this.remove(bananas[0].hid);
@@ -163,6 +167,11 @@ export class Hazards {
       h.z += h.vz * dt;
       const n = t.nearest(h.x, h.z, h.idx);
       h.idx = n.idx;
+      if (t.isGap(n.frac)) {
+        this.remove(h.hid); // shells fall into gaps
+        continue;
+      }
+      h.y = t.heightAt(n.frac);
       const limit = t.wallLat - 0.7;
       if (Math.abs(n.lat) > limit) {
         const s = Math.sign(n.lat);
@@ -178,16 +187,17 @@ export class Hazards {
         }
         h.bounces++;
       }
-      h.mesh.position.set(h.x, 0, h.z);
+      h.mesh.position.set(h.x, h.y, h.z);
       h.mesh.rotation.y += dt * 14;
       if (h.bounces > 6 || now - h.born > 9000) this.remove(h.hid);
     }
   }
 
   // Returns the hazard id that hit this kart (and removes it), or null.
-  collide(kartId, x, z, now) {
+  collide(kartId, x, y, z, now) {
     for (const h of this.list.values()) {
       if (h.owner === kartId && now - h.born < 700) continue;
+      if (Math.abs(y - h.y) > 1.6) continue;
       const r = h.kind === 'banana' ? 1.7 : 1.9;
       if ((h.x - x) ** 2 + (h.z - z) ** 2 < r * r) {
         this.remove(h.hid);

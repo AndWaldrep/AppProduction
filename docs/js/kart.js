@@ -156,21 +156,27 @@ export function buildKartMesh(color, name) {
     root.add(tag);
   }
 
-  root.userData = { body, wheels, frontPivots, flame, sparks, sparkMat, paint, baseColor: new THREE.Color(color), tag };
+  root.userData = { body, wheels, frontPivots, flame, sparks, sparkMat, paint, baseColor: new THREE.Color(color), tag, shadow };
   return root;
 }
 
 // Applies a visual state (shared by local and remote karts) to a kart mesh.
+// v.gy is the ground height under the kart (null over a gap), used for the shadow.
 export function poseKartMesh(mesh, v, time, dt) {
   const u = mesh.userData;
-  mesh.position.set(v.x, 0, v.z);
+  const y = v.y || 0;
+  mesh.position.set(v.x, y, v.z);
   mesh.rotation.y = v.h;
-  u.slide = THREE.MathUtils.lerp(u.slide || 0, -(v.dd || 0) * 0.38, Math.min(1, dt * 8));
+  const k = Math.min(1, dt * 8);
+  u.slide = THREE.MathUtils.lerp(u.slide || 0, -(v.dd || 0) * 0.38, k);
   let yaw = u.slide;
   if (v.sp) yaw += (time * 12) % (Math.PI * 2);
   u.body.rotation.y = yaw;
   u.body.position.y = v.hop || 0;
-  u.body.rotation.z = THREE.MathUtils.lerp(u.body.rotation.z, -(v.steer || 0) * 0.06, Math.min(1, dt * 6));
+  u.pitch = THREE.MathUtils.lerp(u.pitch || 0, v.pt || 0, Math.min(1, dt * 10));
+  u.body.rotation.x = -u.pitch;
+  u.lean = THREE.MathUtils.lerp(u.lean || 0, -(v.steer || 0) * 0.06, Math.min(1, dt * 6));
+  u.body.rotation.z = u.lean + (v.tr ? v.tr * Math.PI * 2 : 0);
   const spin = ((v.s || 0) * dt) / 0.42;
   for (const w of u.wheels) w.rotation.x += spin;
   for (const p of u.frontPivots) p.rotation.y = (v.steer || 0) * 0.45;
@@ -187,9 +193,19 @@ export function poseKartMesh(mesh, v, time, dt) {
   } else if (!u.paint.color.equals(u.baseColor)) {
     u.paint.color.copy(u.baseColor);
   }
+  // Shadow stays on the ground, shrinking as the kart gets higher.
+  const gy = v.gy;
+  u.shadow.visible = gy !== null && gy !== undefined && y - gy < 25;
+  if (u.shadow.visible) {
+    const above = Math.max(0, y - gy);
+    u.shadow.position.y = gy - y + 0.05;
+    u.shadow.scale.setScalar(1 / (1 + above * 0.08));
+  }
 }
 
 // ------------------------------------------------------------------ physics
+
+const GRAVITY = 34;
 
 export class KartSim {
   constructor(track, pose) {
@@ -211,11 +227,25 @@ export class KartSim {
     this.starTime = 0;
     this.offroad = false;
     this.maxFactor = 1;
+    // Height: y is the kart's height, vy its vertical speed.
+    this.air = false;
+    this.airTime = 0;
+    this.falling = false;
+    this.fallTime = 0;
+    this.trick = false;
+    this.trickT = 0;
+    this.onRamp = false;
     const n = track.nearest(this.x, this.z);
     this.idx = n.idx;
+    this.lat = n.lat;
     this.lastFrac = n.frac;
+    this.lastSafeIdx = n.idx;
+    this.y = track.heightAt(n.frac);
+    this.vy = 0;
+    this.groundY = this.y;
     this.progress = n.frac > track.N / 2 ? n.frac - track.N : n.frac;
-    this.events = []; // 'wall', 'boost', 'miniturbo', 'bump'
+    // 'wall', 'boost', 'miniturbo', 'bump', 'hit', 'jump', 'land', 'trick', 'trickboost', 'fall', 'respawn'
+    this.events = [];
   }
 
   get driftTier() {
@@ -231,11 +261,11 @@ export class KartSim {
 
   star() {
     this.starTime = 7;
-    this.events.push('boost');
+    this.events.push('star');
   }
 
   hit() {
-    if (this.starTime > 0 || this.spinTime > 0) return false;
+    if (this.starTime > 0 || this.spinTime > 0 || this.falling) return false;
     this.spinTime = 1.3;
     this.driftDir = 0;
     this.driftCharge = 0;
@@ -244,20 +274,54 @@ export class KartSim {
     return true;
   }
 
+  // Place the kart back on the road a little before where it fell off.
+  respawn() {
+    const t = this.track;
+    let i = t.wrap(this.lastSafeIdx - 6);
+    for (let k = 0; k < 40 && (t.gap[i] || t.ramp[i]); k++) i = t.wrap(i - 1);
+    const p = t.pointAt(i, 0);
+    let delta = i - this.lastFrac;
+    if (delta > t.N / 2) delta -= t.N;
+    if (delta < -t.N / 2) delta += t.N;
+    this.progress += delta;
+    this.lastFrac = i;
+    this.idx = i;
+    this.x = p.x;
+    this.z = p.z;
+    this.h = p.h;
+    this.y = p.y;
+    this.vy = 0;
+    this.groundY = p.y;
+    this.speed = 0;
+    this.kx = this.kz = 0;
+    this.air = this.falling = this.trick = false;
+    this.spinTime = 0;
+    this.boostTime = 0;
+    this.events.push('respawn');
+  }
+
   update(dt, input, others) {
     const t = this.track;
     this.boostTime = Math.max(0, this.boostTime - dt);
     this.starTime = Math.max(0, this.starTime - dt);
     this.spinTime = Math.max(0, this.spinTime - dt);
 
-    const canDrive = this.spinTime <= 0;
+    const canDrive = this.spinTime <= 0 && !this.falling;
     const steerIn = canDrive ? input.steer : 0;
     this.steer += (steerIn - this.steer) * Math.min(1, dt * 10);
 
     // ---- drifting: hop on press, slide while held and steering, mini-turbo on release
     const driftHeld = canDrive && input.drift;
-    if (driftHeld && !this.driftWasHeld && this.hop <= 0.01) this.hopV = 5;
-    if (driftHeld && !this.driftDir && Math.abs(input.steer) > 0.3 && this.speed > 12) {
+    const pressed = driftHeld && !this.driftWasHeld;
+    if (pressed && this.air && !this.trick && this.airTime < 0.9) {
+      // Trick in mid-air: lands with a boost.
+      this.trick = true;
+      this.trickT = 0;
+      this.events.push('trick');
+    } else if (pressed && !this.air && this.hop <= 0.01) {
+      this.hopV = 5;
+    }
+    if (driftHeld && !this.driftDir && !this.air && Math.abs(input.steer) > 0.3 && this.speed > 12) {
       this.driftDir = Math.sign(input.steer);
       this.driftCharge = 0;
     }
@@ -271,7 +335,8 @@ export class KartSim {
       this.driftCharge = 0;
     }
     this.driftWasHeld = driftHeld;
-    if (this.driftDir) this.driftCharge += dt * (0.8 + 0.6 * Math.max(0, input.steer * this.driftDir));
+    if (this.driftDir && !this.air) this.driftCharge += dt * (0.8 + 0.6 * Math.max(0, input.steer * this.driftDir));
+    if (this.trick) this.trickT = Math.min(1, this.trickT + dt / 0.45);
 
     this.hopV -= 30 * dt;
     this.hop = Math.max(0, this.hop + this.hopV * dt);
@@ -284,7 +349,7 @@ export class KartSim {
     else if (this.offroad && this.starTime <= 0) top = OFFROAD_MAX;
 
     if (!canDrive) {
-      this.speed *= Math.exp(-2.5 * dt);
+      this.speed *= Math.exp(-(this.falling ? 1.5 : 2.5) * dt);
     } else if (input.brake) {
       this.speed -= (this.speed > 0 ? 40 : 14) * dt;
       this.speed = Math.max(REVERSE_MAX, this.speed);
@@ -298,10 +363,12 @@ export class KartSim {
     } else {
       this.speed -= Math.sign(this.speed) * Math.min(Math.abs(this.speed), 8 * dt);
     }
-    if (this.speed > top) this.speed = Math.max(top, this.speed - (this.offroad ? 45 : 18) * dt);
+    if (this.speed > top && !this.air) this.speed = Math.max(top, this.speed - (this.offroad ? 45 : 18) * dt);
+    // Hills: slower going up, faster coming down.
+    if (!this.air && this.boostTime <= 0) this.speed -= t.slopeAt(this.idx) * 16 * dt;
 
     // ---- steering
-    const speedFactor = Math.min(1, Math.abs(this.speed) / 9);
+    const speedFactor = Math.min(1, Math.abs(this.speed) / 9) * (this.air ? 0.6 : 1);
     const rate = 2.1 - 0.7 * (Math.max(0, this.speed) / MAX_SPEED);
     let turn;
     if (this.driftDir) {
@@ -320,6 +387,7 @@ export class KartSim {
     // ---- other karts
     if (others) {
       for (const o of others) {
+        if (Math.abs((o.y || 0) - this.y) > 2) continue;
         const dx = this.x - o.x;
         const dz = this.z - o.z;
         const d = Math.hypot(dx, dz);
@@ -346,7 +414,7 @@ export class KartSim {
 
     // ---- track: off-road, walls, progress
     const n = t.nearest(this.x, this.z, this.idx);
-    this.offroad = Math.abs(n.lat) > t.halfWidth + 1.2;
+    this.offroad = !this.air && Math.abs(n.lat) > t.halfWidth + 1.2;
     const limit = t.wallLat - KART_RADIUS * 0.8;
     if (Math.abs(n.lat) > limit) {
       const over = Math.abs(n.lat) - limit;
@@ -380,13 +448,56 @@ export class KartSim {
       }
     }
 
+    // ---- height: hills, ramps, jumps and gaps
+    const gh = t.heightAt(n.frac);
+    const overGap = t.isGap(n.frac);
+    this.groundY = overGap ? null : gh;
+    if (this.falling) {
+      this.vy -= GRAVITY * dt;
+      this.y += this.vy * dt;
+      this.fallTime += dt;
+      if (this.fallTime > 1.3) {
+        this.respawn();
+        return;
+      }
+    } else if (this.air) {
+      this.airTime += dt;
+      this.vy -= GRAVITY * dt;
+      this.y += this.vy * dt;
+      if (!overGap && this.y <= gh) {
+        if (gh - this.y < 1.8) this.land(gh);
+        else this.startFall();
+      } else if (overGap && this.y < gh - 3) {
+        this.startFall();
+      }
+    } else if (overGap) {
+      this.takeOff(this.y + this.vy * dt);
+    } else {
+      // Follow the road; if it drops away faster than gravity can pull us down, we fly.
+      const predicted = this.y + this.vy * dt - 0.5 * GRAVITY * dt * dt;
+      if (gh < predicted - 0.25 && this.vy > 1.5 && this.speed > 10) {
+        this.takeOff(predicted);
+      } else {
+        this.vy = Math.max(-20, Math.min(25, (gh - this.y) / Math.max(dt, 1e-3)));
+        this.y = gh;
+        if (!t.gap[n.idx] && !t.ramp[n.idx]) this.lastSafeIdx = n.idx;
+      }
+    }
+
+    // Ramps launch you with a boost.
+    const onRamp = !this.air && t.isRamp(n.idx);
+    if (onRamp && !this.onRamp && this.speed > 3) this.boost(0.9);
+    this.onRamp = onRamp;
+
     // Boost pads
-    for (const pad of t.pads) {
-      let di = n.idx - pad.idx;
-      if (di > t.N / 2) di -= t.N;
-      if (di < -t.N / 2) di += t.N;
-      if (Math.abs(di * t.spacing) < pad.halfL && Math.abs(n.lat - pad.lat) < pad.halfW + 0.6) {
-        if (this.boostTime < 0.9) this.boost(1.0);
+    if (!this.air) {
+      for (const pad of t.pads) {
+        let di = n.idx - pad.idx;
+        if (di > t.N / 2) di -= t.N;
+        if (di < -t.N / 2) di += t.N;
+        if (Math.abs(di * t.spacing) < pad.halfL && Math.abs(n.lat - pad.lat) < pad.halfW + 0.6) {
+          if (this.boostTime < 0.9) this.boost(1.0);
+        }
       }
     }
 
@@ -399,10 +510,48 @@ export class KartSim {
     this.lat = n.lat;
   }
 
+  takeOff(y) {
+    this.air = true;
+    this.airTime = 0;
+    this.y = y;
+    this.driftDir = 0;
+    this.driftCharge = 0;
+    if (this.vy > 4) this.events.push('jump');
+  }
+
+  land(gh) {
+    if (this.airTime > 0.3) this.events.push('land');
+    this.air = false;
+    this.y = gh;
+    this.vy = 0;
+    if (this.trick) {
+      this.trick = false;
+      this.boost(0.8);
+      this.events.push('trickboost');
+    }
+  }
+
+  startFall() {
+    this.falling = true;
+    this.fallTime = 0;
+    this.air = true;
+    this.trick = false;
+    this.driftDir = 0;
+    this.boostTime = 0;
+    this.events.push('fall');
+  }
+
+  pitch() {
+    if (this.falling) return Math.max(-0.9, -0.3 - this.fallTime);
+    if (this.air) return Math.max(-0.5, Math.min(0.5, Math.atan2(this.vy, Math.max(8, this.speed))));
+    return Math.atan(this.track.slopeAt(this.idx));
+  }
+
   // Compact state sent over the network and used to draw the kart.
   snapshot() {
     return {
       x: this.x,
+      y: this.y,
       z: this.z,
       h: this.h,
       s: this.speed,
@@ -413,6 +562,10 @@ export class KartSim {
       dd: this.driftDir,
       dc: this.driftTier,
       hop: this.hop,
+      pt: this.pitch(),
+      tr: this.trick ? this.trickT : 0,
+      gy: this.groundY,
+      air: this.air ? 1 : 0,
       steer: this.steer,
     };
   }
@@ -442,7 +595,13 @@ export class BotDriver {
       this.laneTimer = 2 + this.rand() * 3;
       this.laneTarget = (this.rand() * 2 - 1) * (t.halfWidth - 3);
     }
-    this.lane += (this.laneTarget - this.lane) * Math.min(1, dt * 0.8);
+    // Line up straight for jumps.
+    let target0 = this.laneTarget;
+    for (const j of t.jumps) {
+      const ahead = t.wrap(j.lip - sim.idx);
+      if (ahead < 45) target0 = 0;
+    }
+    this.lane += (target0 - this.lane) * Math.min(1, dt * (target0 === 0 ? 2 : 0.8));
     const look = 6 + Math.max(0, sim.speed) * 0.35;
     const target = t.pointAt(sim.idx + look, this.lane);
     let want = Math.atan2(target.x - sim.x, target.z - sim.z);
@@ -457,7 +616,7 @@ export class BotDriver {
       steer: Math.max(-1, Math.min(1, -diff * 2.4)),
       throttle: Math.abs(diff) < 1.4,
       brake: Math.abs(diff) > 1.6 && sim.speed > 5,
-      drift: false,
+      drift: sim.air && sim.airTime > 0.12, // CPU racers do tricks too
       corner: Math.abs(diff),
     };
   }
