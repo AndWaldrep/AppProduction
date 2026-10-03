@@ -66,6 +66,7 @@
           <div class="seg">
             <button data-setting="track" data-value="sunny">🌳 Sunny</button>
             <button data-setting="track" data-value="desert">🌵 Canyon</button>
+            <button data-setting="track" data-value="frosty">❄️ Frosty</button>
           </div>
         </div>
         <div class="setting">
@@ -102,7 +103,6 @@
       <div id="lapBox"><div id="lap">Lap 1/3</div><div id="time">0:00.00</div></div>
     </div>
     <canvas id="minimap" width="150" height="150"></canvas>
-    <button id="muteBtn" aria-label="Sound on or off">🔊</button>
     <div id="banner"></div>
     <div id="controls">
       <div id="steerZone">
@@ -127,6 +127,11 @@
       <button id="resultsLeave" class="small ghost">Leave</button>
     </div>
   </section>
+
+  <div id="audioBtns">
+    <button id="musicBtn" aria-label="Music on or off">🎵</button>
+    <button id="sfxBtn" aria-label="Sound effects on or off">🔊</button>
+  </div>
 
   <div id="toast"></div>
   <div id="conn" hidden>Reconnecting…</div>

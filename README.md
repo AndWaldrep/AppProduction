@@ -5,7 +5,12 @@ iPhone, text the link to a friend, and they tap it on their Android (or any
 phone) to join. There's nothing to install, and it runs on free GitHub Pages.
 
 - 2–8 players per room, plus up to 6 CPU racers
-- 2 tracks: **Sunny Speedway** and **Cactus Canyon**
+- 3 tracks with hills, jump ramps over rivers and canyons, and rolling
+  boulders: **Sunny Speedway**, **Cactus Canyon** and **Frosty Peaks**
+- Miss a jump and you fall in, then get put back on the track. Tap DRIFT in
+  mid-air to do a trick, which gives you a boost when you land
+- Original music for each track (it speeds up on the final lap) and
+  synthesized sound effects, with separate 🎵 and 🔊 toggles
 - Drifting with blue and orange mini-turbo boosts, boost pads
 - Item boxes: 🍌 banana, 🐢 shell, 🍄 mushroom, 🍄×3 triple mushroom, ⭐ star
   (racers further back get better items)
@@ -22,6 +27,7 @@ phone) to join. There's nothing to install, and it runs on free GitHub Pages.
 | Brake / reverse | **BRAKE** | ↓ or S |
 
 Drift longer to charge the sparks from blue to orange for a bigger boost.
+Ramps give you a speed boost, and a trick in mid-air gives you another.
 Turn your phone sideways for the widest view. It works upright too.
 
 ## Inviting a friend
@@ -80,5 +86,6 @@ npm test
   the race, it ends for everyone.
 - `docs/js/` holds the client: Three.js rendering (`track.js`, `kart.js`),
   items (`items.js`), touch controls (`input.js`), networking (`net.js`) and
-  game flow (`main.js`). Track layouts live in `docs/js/tracks.js`. Add a
-  new entry there to make a new track.
+  game flow (`main.js`). Track layouts, including hills, jumps and
+  obstacles, live in `docs/js/tracks.js`. Add an entry there to make a new
+  track. Music is written as note patterns in `docs/js/audio.js`.

@@ -11,7 +11,7 @@ const RACE_GRACE_MS = 60 * 1000;
 const RESULTS_TIMEOUT_MS = 30 * 1000; // after the first human finishes
 const COUNTDOWN_MS = 4500;
 const SILENT_MS = 12 * 1000; // a guest that sent nothing for this long has lost its connection
-const TRACKS = ['sunny', 'desert'];
+const TRACKS = ['sunny', 'desert', 'frosty'];
 const BOT_NAMES = ['Turbo', 'Zippy', 'Blaze', 'Nitro', 'Dash', 'Comet', 'Rocket', 'Pixel'];
 export const COLORS = ['#e53935', '#1e88e5', '#43a047', '#fdd835', '#8e24aa', '#fb8c00', '#00acc1', '#f06292'];
 
@@ -291,6 +291,7 @@ export class Room {
           const clean = {
             id: k.id, ts: num(k.ts), x: num(k.x), z: num(k.z), h: num(k.h), s: num(k.s), p: num(k.p),
             sp: num(k.sp), st: num(k.st), b: num(k.b), dd: num(k.dd), dc: num(k.dc), hop: num(k.hop),
+            y: num(k.y), pt: num(k.pt), tr: num(k.tr),
           };
           this.race.kstate[k.id] = clean;
           out.push(clean);
