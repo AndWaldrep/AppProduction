@@ -262,6 +262,7 @@ function renderLobby() {
 
 function leaveRoom() {
   net.leave();
+  releaseWakeLock();
   endRaceLocal();
   app.room = null;
   app.myId = null;
@@ -302,6 +303,8 @@ net.on('status', (s) => {
 
 net.on('welcome', (msg) => {
   app.myId = msg.id;
+  // Keep the screen on while in a room: a locked phone drops everyone connected to it.
+  requestWakeLock();
   history.replaceState(null, '', pageUrl(msg.code));
 });
 
@@ -520,11 +523,11 @@ function endRaceLocal() {
   race.hazards.clear();
   app.race = null;
   sfx.kart({ on: false });
-  releaseWakeLock();
 }
 
 let wakeLock = null;
 async function requestWakeLock() {
+  if (wakeLock && !wakeLock.released) return;
   try {
     wakeLock = await navigator.wakeLock?.request('screen');
   } catch {}
@@ -534,7 +537,7 @@ function releaseWakeLock() {
   wakeLock = null;
 }
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && app.race && (!wakeLock || wakeLock.released)) requestWakeLock();
+  if (document.visibilityState === 'visible' && app.room && (!wakeLock || wakeLock.released)) requestWakeLock();
 });
 
 // ------------------------------------------------------------------ race loop

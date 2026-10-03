@@ -153,6 +153,11 @@ test('guests that go silent are disconnected', () => {
     now += 3000;
     room.checkSilent();
   }
+  assert.ok(!guest.closed, 'a short hiccup is not a disconnect');
+  for (let i = 0; i < 4; i++) {
+    now += 3000;
+    room.checkSilent();
+  }
   assert.ok(guest.closed);
   assert.strictEqual(host.last('room').players.find((p) => p.name === 'B').connected, false);
   room.close();

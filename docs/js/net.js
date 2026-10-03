@@ -8,7 +8,10 @@
 import { Room, makeCode } from './room.js';
 
 const PREFIX = 'kartclash-v1-';
-const GIVE_UP_MS = 90 * 1000; // stop looking for a host that's gone
+const GIVE_UP_MS = 90 * 1000; // stop looking for a race we never reached
+const GIVE_UP_AFTER_PLAYING_MS = 5 * 60 * 1000; // ...or one we were in, after this long
+const HOST_QUIET_MS = 7000; // no word from the host for this long: show "Reconnecting…"
+const HOST_DEAD_MS = 15000; // ...and for this long: hang up and dial again
 const CONNECT_TIMEOUT_MS = 9000;
 
 function peerOptions() {
@@ -39,6 +42,13 @@ export class Net {
       if (document.visibilityState === 'visible') this.wake();
     });
     window.addEventListener('online', () => this.wake());
+    // Keep our line to the matchmaking service open. Phones lose it when switching
+    // between Wi-Fi and cellular; races already running don't need it, but new
+    // players and reconnecting players do.
+    setInterval(() => {
+      const p = this.peer;
+      if (this.active && p && !p.destroyed && p.disconnected) p.reconnect();
+    }, 4000);
   }
 
   on(type, fn) {
@@ -155,6 +165,10 @@ export class Net {
   wake() {
     if (!this.active || !this.peer) return;
     if (this.peer.disconnected && !this.peer.destroyed) this.peer.reconnect();
+    if (this.role === 'guest' && this.isOpen() && Date.now() - this.lastHeard > HOST_QUIET_MS) {
+      // Back from the background and the link went stale while we were away.
+      this.conn.close();
+    }
     if (this.role === 'guest' && !this.isOpen()) {
       clearTimeout(this.retryTimer);
       this.dial();
@@ -169,6 +183,9 @@ export class Net {
     const peer = (this.peer = new Peer(PREFIX + code, peerOptions()));
     peer.on('open', () => {
       if (this.peer !== peer) return;
+      // 'open' fires again each time we get back onto the matchmaking service after a
+      // network blip. The room (and everyone in it) carries on; only set it up once.
+      if (this.room) return;
       this.room = new Room(code);
       this.local = { local: true, send: (m) => queueMicrotask(() => this.deliver(clone(m))), close() {} };
       this.room.attach(this.local);
@@ -181,12 +198,14 @@ export class Net {
       dc.on('close', () => this.room && this.room.detach(dc));
       dc.on('error', () => this.room && this.room.detach(dc));
     });
-    peer.on('disconnected', () => {
-      // Lost the introduction service (friends already connected keep playing). Get it back.
-      setTimeout(() => this.peer === peer && !peer.destroyed && peer.disconnected && peer.reconnect(), 1500);
-    });
     peer.on('error', (err) => {
       if (this.peer !== peer) return;
+      if (this.room) {
+        // The race is running. Losing the matchmaking service (or it still holding our old
+        // line after a network switch, "unavailable-id") doesn't affect connected players,
+        // so never tear the room down here; the reconnect loop gets the service back.
+        return;
+      }
       if (err.type === 'unavailable-id') {
         peer.destroy();
         if (restoring && attempt < 12) {
@@ -217,14 +236,20 @@ export class Net {
     this.everConnected = false;
     this.attempts = 0;
     this.emit('status', 'searching');
+    this.newGuestPeer();
+  }
+
+  newGuestPeer() {
     const peer = (this.peer = new Peer(peerOptions()));
     peer.on('open', () => this.peer === peer && !this.isOpen() && this.dial());
-    peer.on('disconnected', () => {
-      setTimeout(() => this.peer === peer && !peer.destroyed && peer.disconnected && peer.reconnect(), 1000);
-    });
     peer.on('error', (err) => {
       if (this.peer !== peer) return;
-      if (err.type === 'peer-unavailable') {
+      if (err.type === 'unavailable-id' && !this.isOpen()) {
+        // The service still holds our old line. Guests don't need a fixed name: get a new one.
+        const old = peer;
+        setTimeout(() => old.destroy(), 0);
+        this.newGuestPeer();
+      } else if (err.type === 'peer-unavailable') {
         // The host's phone isn't online right now (maybe still in Messages). Keep looking.
         this.retry();
       } else if (['network', 'server-error', 'socket-error', 'socket-closed'].includes(err.type)) {
@@ -256,18 +281,42 @@ export class Net {
     dc.on('open', () => {
       if (this.peer !== peer) return;
       clearTimeout(this.connectTimer);
+      if (this.conn && this.conn !== dc) this.conn.close();
       this.conn = dc;
       this.everConnected = true;
       this.attempts = 0;
+      this.lastHeard = Date.now();
+      this.quiet = false;
       this.emit('status', 'online');
       if (this.session) dc.send({ t: 'rejoin', code: this.session.code, id: this.session.id, token: this.session.token });
       else if (this.pendingJoin) dc.send(this.pendingJoin);
-      const ping = () => this.send({ t: 'ping', c: Date.now() });
+      const ping = () => {
+        // The host answers every ping, so silence means the link is in trouble.
+        const silent = Date.now() - this.lastHeard;
+        if (silent > HOST_DEAD_MS) {
+          dc.close();
+          lost();
+          return;
+        }
+        if (silent > HOST_QUIET_MS && !this.quiet) {
+          this.quiet = true;
+          this.emit('status', 'offline');
+        }
+        this.send({ t: 'ping', c: Date.now() });
+      };
       ping();
       clearInterval(this.pingTimer);
       this.pingTimer = setInterval(ping, 2000);
     });
-    dc.on('data', (m) => this.conn === dc && this.deliver(m));
+    dc.on('data', (m) => {
+      if (this.conn !== dc) return;
+      this.lastHeard = Date.now();
+      if (this.quiet) {
+        this.quiet = false;
+        this.emit('status', 'online');
+      }
+      this.deliver(m);
+    });
     const lost = () => {
       if (this.conn !== dc) return;
       this.conn = null;
@@ -283,7 +332,7 @@ export class Net {
   retry() {
     if (!this.active || this.role !== 'guest' || this.isOpen()) return;
     clearTimeout(this.retryTimer);
-    if (Date.now() - this.searchStart > GIVE_UP_MS) {
+    if (Date.now() - this.searchStart > (this.everConnected ? GIVE_UP_AFTER_PLAYING_MS : GIVE_UP_MS)) {
       this.active = false;
       this.emit('error', this.everConnected
         ? { code: 'hostgone', msg: 'Lost the connection to the host’s phone.' }
