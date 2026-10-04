@@ -162,12 +162,14 @@ function connecting() {
 
 $('createBtn').onclick = () => {
   sfx.unlock();
+  requestWakeLock();
   saveProfile();
   connecting();
   net.connect({ t: 'create', name: app.profile.name, color: app.profile.color });
 };
 function joinCode(code) {
   sfx.unlock();
+  requestWakeLock();
   saveProfile();
   if (!/^[A-Z]{4}$/.test(code)) {
     toast('Enter the 4-letter room code');
@@ -262,6 +264,7 @@ function renderLobby() {
 
 function leaveRoom() {
   net.leave();
+  $('netInfo').hidden = true;
   releaseWakeLock();
   endRaceLocal();
   app.room = null;
@@ -299,6 +302,12 @@ sfx.music('menu'); // starts after the first tap
 net.on('status', (s) => {
   $('conn').hidden = s === 'online' || !net.active;
   $('conn').textContent = s === 'searching' ? 'Looking for the race… (your friend needs the game open)' : 'Reconnecting…';
+});
+
+// How this phone reaches the host: direct is best; a relay server works but can be shakier.
+net.on('link', (type) => {
+  $('netInfo').hidden = false;
+  $('netInfo').textContent = type === 'relay' ? '📶 Connected through a relay server (on the same Wi-Fi is steadier)' : '📶 Connected directly to the host';
 });
 
 net.on('welcome', (msg) => {
@@ -404,6 +413,12 @@ net.on('results', (msg) => {
 // ------------------------------------------------------------------ race setup
 
 function beginRace(msg) {
+  const cur = app.race;
+  if (cur && cur.startAt === msg.startAt && cur.track === msg.track) {
+    // We just reconnected to the race we're already in: keep going as we were.
+    for (const [i, f] of (msg.finished || []).entries()) if (!cur.finished.has(f.id)) cur.finished.set(f.id, { ...f, place: i + 1 });
+    return;
+  }
   endRaceLocal();
   loadTrack(msg.track);
   const track = app.track;
@@ -412,6 +427,7 @@ function beginRace(msg) {
   const race = {
     laps: msg.laps,
     startAt: msg.startAt,
+    track: msg.track,
     karts: new Map(),
     finished: new Map((msg.finished || []).map((f, i) => [f.id, { ...f, place: i + 1 }])),
     boxes: new ItemBoxes(track, scene),
@@ -526,20 +542,37 @@ function endRaceLocal() {
   sfx.kart({ on: false });
 }
 
+// Keep the screen on while in a room. If a phone auto-locks (iPhones do after 30s
+// without a new touch, e.g. after finishing while a friend is still racing) its
+// connection drops, and if it's hosting, everyone's does. iPhones only grant this
+// right after a tap, so we ask again on every tap until we have it.
 let wakeLock = null;
+let wakeLockPending = false;
 async function requestWakeLock() {
-  if (wakeLock && !wakeLock.released) return;
+  if ((wakeLock && !wakeLock.released) || wakeLockPending || !navigator.wakeLock) return;
+  wakeLockPending = true;
   try {
-    wakeLock = await navigator.wakeLock?.request('screen');
-  } catch {}
+    const lock = await navigator.wakeLock.request('screen');
+    wakeLock = lock;
+    lock.addEventListener('release', () => {
+      if (wakeLock === lock) wakeLock = null;
+    });
+  } catch {
+    // Not allowed right now (no recent tap, or the page is hidden): the next tap tries again.
+  } finally {
+    wakeLockPending = false;
+  }
 }
 function releaseWakeLock() {
   wakeLock?.release().catch(() => {});
   wakeLock = null;
 }
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && app.room && (!wakeLock || wakeLock.released)) requestWakeLock();
+  if (document.visibilityState === 'visible' && app.room) requestWakeLock();
 });
+for (const type of ['pointerdown', 'keydown']) {
+  document.addEventListener(type, () => app.room && requestWakeLock(), { capture: true, passive: true });
+}
 
 // ------------------------------------------------------------------ race loop
 

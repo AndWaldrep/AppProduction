@@ -307,6 +307,7 @@ export class Net {
       ping();
       clearInterval(this.pingTimer);
       this.pingTimer = setInterval(ping, 2000);
+      this.watchLink(dc, lost);
     });
     dc.on('data', (m) => {
       if (this.conn !== dc) return;
@@ -327,6 +328,60 @@ export class Net {
     };
     dc.on('close', lost);
     dc.on('error', lost);
+  }
+
+  // Watch the phone-to-phone link itself. When it breaks the browser tells us within a
+  // few seconds, much sooner than waiting for messages to stop, so we redial right away.
+  watchLink(dc, lost) {
+    const pc = dc.peerConnection;
+    if (!pc) return;
+    let downTimer = null;
+    const state = () => pc.connectionState || pc.iceConnectionState;
+    const check = () => {
+      if (this.conn !== dc) return;
+      const st = state();
+      if (st === 'failed' || st === 'closed') {
+        clearTimeout(downTimer);
+        dc.close();
+        lost();
+      } else if (st === 'disconnected') {
+        if (!this.quiet) {
+          this.quiet = true;
+          this.emit('status', 'offline');
+        }
+        // Often it comes back by itself within a moment; if not, start over.
+        clearTimeout(downTimer);
+        downTimer = setTimeout(() => {
+          if (this.conn === dc && ['disconnected', 'failed'].includes(state())) {
+            dc.close();
+            lost();
+          }
+        }, 4000);
+      } else if (st === 'connected' || st === 'completed') {
+        clearTimeout(downTimer);
+      }
+    };
+    pc.addEventListener('connectionstatechange', check);
+    pc.addEventListener('iceconnectionstatechange', check);
+    // Note whether we're linked directly or through a relay server (shown in the lobby).
+    setTimeout(() => this.detectLinkType(pc, dc), 1500);
+  }
+
+  async detectLinkType(pc, dc) {
+    try {
+      const stats = await pc.getStats();
+      let pair = null;
+      stats.forEach((r) => {
+        if (r.type === 'transport' && r.selectedCandidatePairId) pair = stats.get(r.selectedCandidatePairId);
+      });
+      if (!pair) stats.forEach((r) => r.type === 'candidate-pair' && r.state === 'succeeded' && (r.nominated || r.selected) && (pair = pair || r));
+      if (!pair || this.conn !== dc) return;
+      const local = stats.get(pair.localCandidateId);
+      const remote = stats.get(pair.remoteCandidateId);
+      const relayed = local?.candidateType === 'relay' || remote?.candidateType === 'relay';
+      this.linkType = relayed ? 'relay' : 'direct';
+      this.emit('link', this.linkType);
+    } catch {}
   }
 
   retry() {

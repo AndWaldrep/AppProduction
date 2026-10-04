@@ -7,7 +7,7 @@
 const MAX_PLAYERS = 8;
 const MAX_KARTS = 8;
 const LOBBY_GRACE_MS = 3 * 60 * 1000; // keep a player's seat while they're away from the game
-const RACE_GRACE_MS = 60 * 1000;
+const RACE_GRACE_MS = 3 * 60 * 1000;
 const RESULTS_TIMEOUT_MS = 30 * 1000; // after the first human finishes
 const COUNTDOWN_MS = 4500;
 const SILENT_MS = 25 * 1000; // a guest that sent nothing for this long has lost its connection
