@@ -7,13 +7,14 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test test/*.test.mjs",
-    "vendor": "cp node_modules/three/build/three.module.js node_modules/three/build/three.core.js docs/vendor/three/ && cp node_modules/peerjs/dist/peerjs.min.js docs/vendor/"
+    "vendor": "cp node_modules/three/build/three.module.js node_modules/three/build/three.core.js docs/vendor/three/ && cp node_modules/peerjs/dist/peerjs.min.js docs/vendor/ && cp node_modules/qrcode-generator/dist/qrcode.mjs docs/vendor/qrcode.js"
   },
   "engines": {
     "node": ">=18"
   },
   "devDependencies": {
     "peerjs": "^1.5.5",
+    "qrcode-generator": "^2.0.4",
     "three": "^0.186.1"
   }
 }

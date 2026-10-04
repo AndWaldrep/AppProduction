@@ -373,3 +373,39 @@ body.racing #audioBtns { top: calc(164px + var(--safe-t)); right: calc(12px + va
   .lobbyCard { max-width: 760px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   .code { font-size: 32px; }
 }
+
+/* ---------- TV mode (laptop on a TV, split screen) */
+
+.tvOption { border-top: 1px solid var(--line); padding-top: 10px; text-align: center; display: flex; flex-direction: column; gap: 4px; }
+.hint.small { font-size: 12px; }
+#qrBox { display: flex; gap: 16px; align-items: center; background: #fff; color: #222; border-radius: 16px; padding: 12px; }
+#qrBox[hidden] { display: none; }
+#qr svg, #qr img { display: block; width: 168px; height: 168px; }
+.qrTitle { font-weight: 800; font-size: 18px; margin: 0 0 6px; }
+.qrUrl { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-all; color: #444; margin: 0 0 6px; }
+#qrBox .hint { color: #666; text-align: left; }
+
+body.tv .lobbyCard { max-width: 980px; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+body.tv .card { font-size: 18px; }
+body.tv .code { font-size: 54px; }
+body.tv #inviteBtn, body.tv #smsLink { display: none; }
+
+#tvHud { display: none; position: absolute; inset: 0; }
+body.tv #tvHud { display: block; }
+body.tv #hudTop, body.tv #controls, body.tv #audioBtns { display: none; }
+body.tv #minimap { top: 50%; left: 50%; right: auto; transform: translate(-50%, -50%); width: 170px; height: 170px; }
+.tvView { position: absolute; border: 2px solid rgba(0, 0, 0, 0.6); box-sizing: border-box; }
+.tvView .tvTop { position: absolute; top: 10px; left: 12px; right: 12px; display: flex; justify-content: space-between; align-items: flex-start; text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.6); font-weight: 900; }
+.tvView .tvPos { font-size: 52px; line-height: 1; font-style: italic; color: var(--accent2); }
+.tvView .tvPos sup { font-size: 22px; }
+.tvView .tvName { display: inline-block; margin-top: 4px; padding: 3px 10px; border-radius: 99px; font-size: 16px; color: #fff; text-shadow: none; }
+.tvView .tvItem { width: 64px; height: 64px; border-radius: 14px; border: 3px solid rgba(255, 255, 255, 0.8); background: rgba(0, 0, 0, 0.35); display: flex; align-items: center; justify-content: center; font-size: 32px; }
+.tvView .tvItem.ready { border-color: var(--accent2); box-shadow: 0 0 14px rgba(255, 196, 0, 0.8); }
+.tvView .tvLap { text-align: right; font-size: 24px; }
+.tvView .tvTime { font-size: 18px; color: #eee; font-variant-numeric: tabular-nums; }
+.tvView .tvBanner { position: absolute; left: 0; right: 0; top: 38%; text-align: center; font-size: 54px; font-weight: 900; font-style: italic; color: #fff; text-shadow: 4px 4px 0 #d50000, 8px 8px 0 rgba(0, 0, 0, 0.35); opacity: 0; transition: opacity 0.15s; }
+.tvView .tvBanner.show { opacity: 1; }
+.tvView .tvBanner.finish { color: var(--accent2); }
+.tvView.overview .tvTop { display: none; }
+
+.players li.empty { justify-content: center; color: var(--muted); font-style: italic; }

@@ -37,6 +37,10 @@
         <button id="joinBtn" class="big">Join</button>
       </div>
       <p class="hint">Turn your phone sideways for the best view</p>
+      <div class="tvOption">
+        <button id="tvBtn" class="small ghost">📺 TV mode: show everyone's view on a big screen</button>
+        <p class="hint small">Open this on a laptop hooked up to a TV</p>
+      </div>
     </div>
   </section>
 
@@ -51,9 +55,18 @@
         </div>
         <button id="leaveBtn" class="small ghost">Leave</button>
       </div>
+      <div id="qrBox" hidden>
+        <div id="qr"></div>
+        <div>
+          <p class="qrTitle">Scan with your phone camera to join the race</p>
+          <p class="qrUrl" id="qrUrl"></p>
+          <p class="hint">Up to 4 players. Play on your phone, and the TV shows everyone's view.</p>
+        </div>
+      </div>
+      <p id="padNote" class="invited" hidden>📺 This race is on the big screen too!</p>
       <p id="netInfo" class="hint" hidden></p>
       <button id="inviteBtn" class="big primary">💬 Invite a friend by text</button>
-      <div class="inviteRow">
+      <div class="inviteRow" id="inviteRow">
         <a id="smsLink" class="small ghost" href="#">Open Messages</a>
         <button id="copyBtn" class="small ghost">Copy link</button>
       </div>
@@ -104,6 +117,7 @@
       <div id="lapBox"><div id="lap">Lap 1/3</div><div id="time">0:00.00</div></div>
     </div>
     <canvas id="minimap" width="150" height="150"></canvas>
+    <div id="tvHud"></div>
     <div id="banner"></div>
     <div id="controls">
       <div id="steerZone">

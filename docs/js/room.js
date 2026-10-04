@@ -5,6 +5,7 @@
 // A connection is any object with send(msg) and close().
 
 const MAX_PLAYERS = 8;
+const MAX_TV_PLAYERS = 4; // TV mode: the big screen splits into one view per player
 const MAX_KARTS = 8;
 const LOBBY_GRACE_MS = 3 * 60 * 1000; // keep a player's seat while they're away from the game
 const RACE_GRACE_MS = 3 * 60 * 1000;
@@ -47,6 +48,7 @@ export class Room {
     this.race = null;
     this.resultsTimer = null;
     this.closed = false;
+    this.tv = false; // TV mode: the host is a big screen showing everyone's view, not a racer
     this.watchdog = setInterval(() => this.checkSilent(), 3000);
   }
 
@@ -118,6 +120,7 @@ export class Room {
       t: 'room',
       code: this.code,
       hostId: this.hostId,
+      tv: this.tv,
       state: this.state,
       settings: this.settings,
       players: [...this.players.values()].map((p) => ({
@@ -147,7 +150,8 @@ export class Room {
   }
 
   connectedHumans() {
-    return [...this.players.values()].filter((p) => p.conn);
+    // In TV mode the screen itself isn't a racer.
+    return [...this.players.values()].filter((p) => p.conn && !(this.tv && p.id === this.hostId));
   }
 
   removePlayer(player) {
@@ -169,7 +173,8 @@ export class Room {
     // Humans start at the back of the grid, like the real thing.
     karts.reverse();
     karts.forEach((k, i) => (k.grid = i));
-    for (const p of this.players.values()) p.inRace = !!p.conn;
+    const racers = new Set(humans);
+    for (const p of this.players.values()) p.inRace = racers.has(p);
     this.state = 'racing';
     this.race = {
       startAt: this.now() + COUNTDOWN_MS,
@@ -255,7 +260,7 @@ export class Room {
         this.pushRoom();
         return;
       }
-      if (this.players.size >= MAX_PLAYERS) {
+      if (this.players.size >= (this.tv ? MAX_TV_PLAYERS + 1 : MAX_PLAYERS)) {
         this.send(conn, { t: 'error', code: 'full', msg: 'That race is full.' });
         return;
       }
@@ -268,9 +273,10 @@ export class Room {
         inRace: false,
         dropTimer: null,
       };
-      p.color = this.cleanColor(msg.color);
+      p.color = msg.t === 'create' && msg.tv ? '#ffffff' : this.cleanColor(msg.color); // the TV doesn't take a kart color
       this.players.set(p.id, p);
       if (msg.t === 'create' || !this.hostId) this.hostId = p.id;
+      if (msg.t === 'create' && msg.tv) this.tv = true;
       c.player = p;
       this.send(conn, { t: 'welcome', id: p.id, token: p.token, code: this.code });
       this.pushRoom();
@@ -280,18 +286,20 @@ export class Room {
     const player = c.player;
     if (!player) return;
     const isHost = this.hostId === player.id;
+    // In TV mode anyone on the couch may pick the track and start.
+    const canControl = isHost || this.tv;
 
     switch (msg.t) {
       case 's': {
         // Kart state, ~15 times a second. Remember progress for standings and relay.
-        if (this.state !== 'racing' || !player.inRace || !Array.isArray(msg.k)) return;
+        if (this.state !== 'racing' || !(player.inRace || (this.tv && isHost)) || !Array.isArray(msg.k)) return;
         const out = [];
         for (const k of msg.k.slice(0, MAX_KARTS)) {
           if (!k || !this.ownsKart(player, k.id)) continue;
           const clean = {
             id: k.id, ts: num(k.ts), x: num(k.x), z: num(k.z), h: num(k.h), s: num(k.s), p: num(k.p),
             sp: num(k.sp), st: num(k.st), b: num(k.b), dd: num(k.dd), dc: num(k.dc), hop: num(k.hop),
-            y: num(k.y), pt: num(k.pt), tr: num(k.tr), md: num(k.md) & 7,
+            y: num(k.y), pt: num(k.pt), tr: num(k.tr), md: num(k.md) & 7, it: num(k.it), u: num(k.u),
           };
           this.race.kstate[k.id] = clean;
           out.push(clean);
@@ -333,7 +341,7 @@ export class Room {
         return;
       }
       case 'settings': {
-        if (!isHost || this.state !== 'lobby') return;
+        if (!canControl || this.state !== 'lobby') return;
         const s = this.settings;
         if (msg.laps !== undefined) s.laps = Math.max(1, Math.min(5, Math.round(num(msg.laps)) || 3));
         if (msg.bots !== undefined) s.bots = Math.max(0, Math.min(6, Math.round(num(msg.bots))));
@@ -342,11 +350,11 @@ export class Room {
         return;
       }
       case 'startRace': {
-        if (isHost && this.state === 'lobby') this.startRace();
+        if (canControl && this.state === 'lobby' && this.connectedHumans().length > 0) this.startRace();
         return;
       }
       case 'toLobby': {
-        if (!isHost) return;
+        if (!canControl) return;
         if (this.state === 'racing') this.endRace();
         this.state = 'lobby';
         this.race = null;

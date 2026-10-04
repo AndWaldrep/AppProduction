@@ -164,3 +164,45 @@ test('guests that go silent are disconnected', () => {
   assert.strictEqual(host.last('room').players.find((p) => p.name === 'B').connected, false);
   room.close();
 });
+
+test('TV mode: the big screen hosts and shows everyone; phones still play', () => {
+  const room = new Room('TVTV');
+  const tv = conn(room);
+  tv.say({ t: 'create', name: 'TV', tv: true });
+  const tw = tv.take('welcome');
+  assert.strictEqual(tv.last('room').tv, true);
+
+  // Can't start before a phone has joined.
+  tv.say({ t: 'startRace' });
+  assert.strictEqual(room.state, 'lobby');
+
+  const phones = [];
+  for (const name of ['Ann', 'Bo', 'Cy', 'Di']) {
+    const c = conn(room);
+    c.say({ t: 'join', code: 'TVTV', name });
+    phones.push({ c, id: c.take('welcome').id });
+  }
+  const extra = conn(room);
+  extra.say({ t: 'join', code: 'TVTV', name: 'Ed' });
+  assert.strictEqual(extra.take('error').code, 'full', 'split screen fits four players');
+  assert.ok(!tv.last('room').players.slice(1).some((p) => p.color === '#ffffff'), 'the TV does not use up a kart color');
+
+  // Anyone on the couch can change settings and start.
+  phones[0].c.say({ t: 'settings', bots: 1, laps: 1 });
+  phones[1].c.say({ t: 'startRace' });
+  const start = tv.take('start');
+  assert.deepStrictEqual(start.karts.filter((k) => !k.bot).map((k) => k.id).sort(), phones.map((p) => p.id).sort(), 'the TV is not a racer');
+
+  // Each phone drives its own kart and the TV sees it; the TV drives only the CPUs.
+  phones[2].c.say({ t: 's', k: [{ id: phones[2].id, x: 4, p: 3, it: 6, u: 1 }] });
+  const seen = tv.take('s').k[0];
+  assert.strictEqual(seen.id, phones[2].id);
+  assert.strictEqual(seen.it, 6, 'item shown on the TV');
+  tv.say({ t: 's', k: [{ id: 'bot0', x: 1 }, { id: phones[0].id, x: 99 }] });
+  assert.deepStrictEqual(phones[1].c.take('s', (m) => m.k[0].id === 'bot0').k.map((k) => k.id), ['bot0'], 'the TV cannot move a phone player\'s kart');
+
+  phones.forEach((p, i) => p.c.say({ t: 'finish', id: p.id, time: 40 + i }));
+  const results = tv.take('results');
+  assert.deepStrictEqual(results.standings.slice(0, 4).map((s) => s.id), phones.map((p) => p.id));
+  room.close();
+});

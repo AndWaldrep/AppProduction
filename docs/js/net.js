@@ -72,7 +72,7 @@ export class Net {
     this.teardown();
     this.active = true;
     this.session = null;
-    this.profile = { name: joinMsg.name, color: joinMsg.color };
+    this.profile = { name: joinMsg.name, color: joinMsg.color, tv: !!joinMsg.tv };
     if (joinMsg.t === 'create') {
       this.startHost(makeCode(), joinMsg, false);
     } else {
@@ -85,9 +85,9 @@ export class Net {
   resume(session) {
     this.teardown();
     this.active = true;
-    this.profile = { name: session.name, color: session.color };
+    this.profile = { name: session.name, color: session.color, tv: !!session.tv };
     if (session.host) {
-      this.startHost(session.code, { t: 'create', name: session.name, color: session.color, id: session.id, token: session.token }, true);
+      this.startHost(session.code, { t: 'create', name: session.name, color: session.color, id: session.id, token: session.token, tv: !!session.tv }, true);
     } else {
       this.session = session;
       this.startGuest(session.code);

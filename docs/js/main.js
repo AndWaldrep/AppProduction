@@ -3,9 +3,12 @@ import { Track, ROLLER_RADIUS } from './track.js';
 import { TRACKS } from './tracks.js';
 import { KartSim, BotDriver, buildKartMesh, poseKartMesh, MAX_SPEED } from './kart.js';
 import { ItemBoxes, Hazards, rollItem, ITEM_ICONS, ITEM_TIPS, ROULETTE, BLAST_RADIUS } from './items.js';
+
+const ITEM_LIST = Object.keys(ITEM_ICONS); // item numbers sent over the network
 import { Input } from './input.js';
 import { Net } from './net.js';
 import { sfx } from './audio.js';
+import qrcode from '../vendor/qrcode.js';
 
 const COLORS = ['#e53935', '#1e88e5', '#43a047', '#fdd835', '#8e24aa', '#fb8c00', '#00acc1', '#f06292'];
 const SEND_INTERVAL = 1000 / 15;
@@ -47,7 +50,15 @@ const app = {
   trackGroup: null,
   race: null,
   profile: loadProfile(),
+  // 'phone': everyone plays on their own phone (the main way to play).
+  // 'tv': this screen is a TV that also shows every player's view, split screen.
+  mode: 'phone',
 };
+
+function setMode(mode) {
+  app.mode = mode;
+  document.body.classList.toggle('tv', mode === 'tv');
+}
 
 function loadProfile() {
   let p = {};
@@ -179,6 +190,12 @@ function joinCode(code) {
   net.connect({ t: 'join', code, name: app.profile.name, color: app.profile.color });
 }
 $('joinInviteBtn').onclick = () => joinCode(inviteCode);
+$('tvBtn').onclick = () => {
+  sfx.unlock();
+  connecting();
+  setMode('tv');
+  net.connect({ t: 'create', tv: true, name: 'TV', color: '#ffffff' });
+};
 $('joinBtn').onclick = () => joinCode($('codeInput').value.toUpperCase().trim());
 $('codeInput').addEventListener('keydown', (e) => e.key === 'Enter' && $('joinBtn').click());
 
@@ -234,31 +251,47 @@ document.querySelectorAll('[data-setting]').forEach((btn) => {
   };
 });
 
+function renderQr(url) {
+  if (renderQr.url === url) return;
+  renderQr.url = url;
+  const qr = qrcode(0, 'M');
+  qr.addData(url);
+  qr.make();
+  $('qr').innerHTML = qr.createSvgTag({ cellSize: 5, margin: 2, scalable: true });
+  $('qrUrl').textContent = url;
+}
+
 function renderLobby() {
   const room = app.room;
   const isHost = room.hostId === app.myId;
+  const canControl = isHost || room.tv; // in TV mode anyone on the couch can start
+  const racers = room.tv ? room.players.filter((p) => p.id !== room.hostId) : room.players;
   $('roomCode').textContent = room.code;
   $('smsLink').href = `sms:?&body=${encodeURIComponent(inviteText() + ' ' + inviteUrl())}`;
-  $('playerList').innerHTML = room.players
+  $('qrBox').hidden = app.mode !== 'tv';
+  if (app.mode === 'tv') renderQr(inviteUrl());
+  $('padNote').hidden = !(room.tv && app.mode !== 'tv');
+  $('playerList').innerHTML = racers
     .map(
       (p) => `<li>
         <span class="dot" style="background:${p.color}"></span>
         <span class="pname">${escapeHtml(p.name)}${p.id === app.myId ? ' <em>(you)</em>' : ''}</span>
-        ${p.id === room.hostId ? '<span class="badge">👑 host</span>' : ''}
+        ${p.id === room.hostId && !room.tv ? '<span class="badge">👑 host</span>' : ''}
         ${p.connected ? '' : '<span class="badge off">reconnecting…</span>'}
       </li>`
     )
     .join('');
   const s = room.settings;
-  $('hostSettings').hidden = !isHost;
-  $('guestSettings').hidden = isHost;
+  if (room.tv && racers.length === 0) $('playerList').innerHTML = '<li class="empty">No controllers yet: scan the code!</li>';
+  $('hostSettings').hidden = !canControl;
+  $('guestSettings').hidden = canControl;
   $('lapsVal').textContent = s.laps;
   $('botsVal').textContent = s.bots;
   document.querySelectorAll('[data-setting="track"]').forEach((b) => b.classList.toggle('selected', b.dataset.value === s.track));
   $('guestSettings').textContent = `${TRACKS[s.track].name} · ${s.laps} lap${s.laps > 1 ? 's' : ''} · ${s.bots} CPU racer${s.bots === 1 ? '' : 's'}`;
-  $('startBtn').hidden = !isHost;
-  $('waitHost').hidden = isHost;
-  $('soloHint').hidden = !(isHost && room.players.length === 1);
+  $('startBtn').hidden = !canControl || racers.length === 0;
+  $('waitHost').hidden = canControl;
+  $('soloHint').hidden = !(isHost && !room.tv && room.players.length === 1);
   loadTrack(s.track);
 }
 
@@ -266,6 +299,7 @@ function leaveRoom() {
   net.leave();
   $('netInfo').hidden = true;
   releaseWakeLock();
+  setMode('phone');
   endRaceLocal();
   app.room = null;
   app.myId = null;
@@ -333,6 +367,8 @@ net.on('error', (msg) => {
 
 net.on('room', (room) => {
   app.room = room;
+  const mode = room.tv && room.hostId === app.myId ? 'tv' : 'phone';
+  if (mode !== app.mode) setMode(mode);
   if (room.state === 'lobby') {
     if (app.race) endRaceLocal();
     show('lobby');
@@ -346,8 +382,9 @@ net.on('room', (room) => {
     show('waiting');
   }
   if (app.race && room.state === 'results') {
-    $('againBtn').hidden = room.hostId !== app.myId;
-    $('resultsWait').hidden = room.hostId === app.myId;
+    const canControl = room.hostId === app.myId || room.tv;
+    $('againBtn').hidden = !canControl;
+    $('resultsWait').hidden = canControl;
   }
 });
 
@@ -398,9 +435,9 @@ net.on('results', (msg) => {
       </li>`
     )
     .join('');
-  const isHost = app.room && app.room.hostId === app.myId;
-  $('againBtn').hidden = !isHost;
-  $('resultsWait').hidden = isHost;
+  const canControl = app.room && (app.room.hostId === app.myId || app.room.tv);
+  $('againBtn').hidden = !canControl;
+  $('resultsWait').hidden = canControl;
   setTimeout(() => sfx.music('menu'), 2500);
   if (race) {
     race.over = true;
@@ -469,6 +506,7 @@ function beginRace(msg) {
     };
     const startSim = new KartSim(track, pose);
     ent.progress = startSim.progress;
+    // We drive our own kart, and the CPU karts if we're hosting (the TV hosts in TV mode).
     if (mine || (k.bot && amHost)) {
       ent.sim = startSim;
       if (k.bot || ent.finished || AUTOPILOT) ent.ai = new BotDriver(track, ent.seed);
@@ -485,14 +523,67 @@ function beginRace(msg) {
   });
   app.race = race;
   input.read(); // drop any queued button presses
+  setupViewers(race, msg);
   show('race');
   $('itemIcon').textContent = '';
   $('posOf').textContent = '/' + race.karts.size;
   requestWakeLock();
   if (track.jumps.length) setTimeout(() => app.race === race && toast('Tip: tap DRIFT in mid-air for a trick boost!', 3500), 600);
-  if (!race.karts.has(app.myId)) {
+  if (app.mode !== 'tv' && !race.karts.has(app.myId)) {
     endRaceLocal();
     show('waiting');
+  }
+}
+
+// Who is watching on this screen. A phone shows its own kart full screen; the TV
+// splits the screen between every player, each with their own camera and display.
+const TV_LAYOUTS = {
+  1: [[0, 0, 1, 1]],
+  2: [[0, 0, 0.5, 1], [0.5, 0, 0.5, 1]],
+  3: [[0, 0, 0.5, 0.5], [0.5, 0, 0.5, 0.5], [0, 0.5, 0.5, 0.5], [0.5, 0.5, 0.5, 0.5]],
+  4: [[0, 0, 0.5, 0.5], [0.5, 0, 0.5, 0.5], [0, 0.5, 0.5, 0.5], [0.5, 0.5, 0.5, 0.5]],
+};
+function setupViewers(race, msg) {
+  race.viewers = [];
+  race.viewerOf = new Map();
+  const tvHud = $('tvHud');
+  tvHud.innerHTML = '';
+  if (app.mode !== 'tv') {
+    const me = race.karts.get(app.myId);
+    if (!me) return;
+    const hud = { pos: $('pos'), posSuffix: $('posSuffix'), posOf: $('posOf'), lap: $('lap'), time: $('time'), itemIcon: $('itemIcon'), itemBox: $('itemBox') };
+    const view = { ent: me, cam: camera, hud, camPos: null, camY: null };
+    race.viewers.push(view);
+    race.viewerOf.set(me.id, view);
+    return;
+  }
+  const humans = msg.karts.filter((k) => !k.bot).map((k) => race.karts.get(k.id));
+  const layout = TV_LAYOUTS[Math.max(1, Math.min(4, humans.length))];
+  humans.slice(0, 4).forEach((ent, i) => {
+    const [x, y, w, h] = layout[i];
+    const el = document.createElement('div');
+    el.className = 'tvView';
+    Object.assign(el.style, { left: x * 100 + '%', top: y * 100 + '%', width: w * 100 + '%', height: h * 100 + '%' });
+    el.innerHTML = `
+      <div class="tvTop">
+        <div><div class="tvPos"><span>1</span><sup>st</sup></div><span class="tvName" style="background:${ent.color}">${escapeHtml(ent.name)}</span></div>
+        <div class="tvItem"><span></span></div>
+        <div class="tvLap"><div>Lap 1</div><div class="tvTime">0:00.00</div></div>
+      </div>
+      <div class="tvBanner"></div>`;
+    tvHud.appendChild(el);
+    const q = (sel) => el.querySelector(sel);
+    const hud = { pos: q('.tvPos span'), posSuffix: q('.tvPos sup'), lap: q('.tvLap div'), time: q('.tvTime'), itemIcon: q('.tvItem span'), itemBox: q('.tvItem'), banner: q('.tvBanner') };
+    const view = { ent, cam: new THREE.PerspectiveCamera(70, w / h, 0.5, 2000), rect: layout[i], hud, camPos: null, camY: null };
+    race.viewers.push(view);
+    race.viewerOf.set(ent.id, view);
+  });
+  // With three players the fourth quarter shows a fly-over of the track.
+  if (humans.length === 3) {
+    const el = document.createElement('div');
+    el.className = 'tvView overview';
+    Object.assign(el.style, { left: '50%', top: '50%', width: '50%', height: '50%' });
+    tvHud.appendChild(el);
   }
 }
 
@@ -540,6 +631,7 @@ function endRaceLocal() {
   race.hazards.clear();
   app.race = null;
   sfx.kart({ on: false });
+  $('tvHud').innerHTML = '';
 }
 
 // Keep the screen on while in a room. If a phone auto-locks (iPhones do after 30s
@@ -732,6 +824,35 @@ function remoteView(ent, renderT) {
   };
 }
 
+// Which input drives this kart right now, or null to let the CPU drive it.
+function humanControl(ent, inp) {
+  if (ent.bot || ent.finished || AUTOPILOT) return null;
+  return ent.id === app.myId ? inp : null;
+}
+
+// Big text for one player: the whole screen on a phone, their quarter on the TV.
+function viewerSay(view, text, ms, cls) {
+  if (app.mode !== 'tv') {
+    banner(text, ms, cls);
+    return;
+  }
+  const el = view.hud.banner;
+  el.textContent = text;
+  el.className = 'tvBanner show ' + cls;
+  clearTimeout(view.bannerTimer);
+  if (ms) view.bannerTimer = setTimeout(() => (el.className = 'tvBanner'), ms);
+}
+
+function viewerBuzz(view, ms) {
+  if (navigator.vibrate) navigator.vibrate(ms);
+}
+
+function itemIcon(ent, now) {
+  if (ent.rolling > 0) return ROULETTE[Math.floor(now / 90) % ROULETTE.length];
+  if (ent.item) return ent.item === 'mushroom3' ? '🍄×' + ent.uses : ITEM_ICONS[ent.item];
+  return '';
+}
+
 function updateRace(dt, now) {
   const race = app.race;
   const track = app.track;
@@ -753,25 +874,27 @@ function updateRace(dt, now) {
     sfx.go();
     sfx.music(race.song);
   }
-  track.animate(dt, Math.max(0, tRace), camera);
+  track.animate(dt, Math.max(0, tRace), race.viewers[0]?.cam || camera);
 
-  const inp = input.read();
+  const inp = app.mode === 'tv' ? null : input.read();
   const ranks = rankings(race);
   let bestHuman = -Infinity;
   for (const r of ranks) if (!r.e.bot) bestHuman = Math.max(bestHuman, r.p);
 
-  // Simulate karts this phone is responsible for.
+  // Simulate the karts this device is responsible for.
   for (const ent of race.karts.values()) {
     const sim = ent.sim;
     if (!sim) continue;
-    const isMe = ent.id === app.myId;
+    const view = race.viewerOf.get(ent.id); // someone is watching this kart on this screen
+    const human = started ? humanControl(ent, inp) : null;
     let ctl;
     let corner = 0;
     if (!started) {
       ctl = { steer: 0, throttle: false, brake: false, drift: false };
-    } else if (isMe && !ent.finished && !AUTOPILOT) {
-      ctl = inp;
+    } else if (human) {
+      ctl = human;
     } else {
+      if (!ent.ai) ent.ai = new BotDriver(track, ent.seed);
       ctl = ent.ai.drive(sim, dt, ent.bot ? sim.progress - bestHuman : 0);
       corner = ctl.corner;
     }
@@ -781,7 +904,7 @@ function updateRace(dt, now) {
     }
     sim.update(dt, ctl, others);
 
-    if (isMe) {
+    if (view) {
       const evs = sim.events;
       for (const ev of evs) {
         if (ev === 'boost' && !evs.includes('miniturbo') && !evs.includes('trickboost')) sfx.boost();
@@ -812,10 +935,10 @@ function updateRace(dt, now) {
         if (d < ROLLER_RADIUS + 1.1 && Math.abs(sim.y + 0.6 - p.y) < ROLLER_RADIUS + 0.8 && d > 0.01) {
           sim.kx += (dx / d) * 14;
           sim.kz += (dz / d) * 14;
-          if (sim.starTime <= 0 && sim.hit() && isMe) {
+          if (sim.starTime <= 0 && sim.hit() && view) {
             sfx.roller();
             sfx.hit();
-            if (navigator.vibrate) navigator.vibrate(120);
+            viewerBuzz(view, 120);
           }
         }
       }
@@ -829,7 +952,7 @@ function updateRace(dt, now) {
         if (!ent.item && ent.rolling <= 0) {
           ent.rolling = 1.1;
           ent.pending = rollItem(ent.rank || race.karts.size, race.karts.size);
-          if (isMe) sfx.pickup();
+          if (view) sfx.pickup();
         }
       }
       if (ent.rolling > 0) {
@@ -838,19 +961,19 @@ function updateRace(dt, now) {
           ent.item = ent.pending;
           ent.uses = ent.item === 'mushroom3' ? 3 : 1;
           ent.itemAge = 0;
-          if (isMe) {
+          if (view) {
             sfx.itemReady();
             showItemTip(ent.item);
           }
-        } else if (isMe && now - race.lastTick > 90) {
+        } else if (view && now - race.lastTick > 90) {
           race.lastTick = now;
           sfx.roulette();
         }
       }
-      const wants = isMe && !ent.finished ? inp.useItem : ent.item && botWantsItem(ent, dt, corner, race);
+      const wants = human ? human.useItem : ent.item && botWantsItem(ent, dt, corner, race);
       if (wants && ent.item && sim.spinTime <= 0 && (!sim.falling || ent.item === 'rocket')) useItem(ent);
 
-      // Bananas and shells
+      // Bananas, shells, tornadoes and bombs
       const hz = sim.ghostTime > 0 ? null : race.hazards.collide(ent.id, sim.x, sim.y, sim.z, now);
       if (hz) {
         let hurt = false;
@@ -862,21 +985,22 @@ function updateRace(dt, now) {
           race.hazards.explode(hz.h.hid);
         } else if (hz.effect === 'launch') {
           hurt = sim.blast(14);
-          if (hurt && isMe) sfx.tornado();
+          if (hurt && view) sfx.tornado();
         }
-        if (hurt && isMe) {
+        if (hurt && view) {
           sfx.hit();
-          if (navigator.vibrate) navigator.vibrate(120);
+          viewerBuzz(view, 120);
         }
       }
 
       // Laps & finish
       if (!ent.finished) {
         const lap = lapOf(sim.progress, race.laps);
-        if (isMe && lap > ent.lastLap) {
-          banner(lap === race.laps ? 'FINAL LAP!' : `LAP ${lap}`, 1600, 'lap');
+        if (view && lap > ent.lastLap) {
+          viewerSay(view, lap === race.laps ? 'FINAL LAP!' : `LAP ${lap}`, 1600, 'lap');
           if (lap === race.laps) {
-            sfx.finalLap();
+            if (!race.finalLapPlayed) sfx.finalLap();
+            race.finalLapPlayed = true;
             sfx.setTempo(1.12);
           } else {
             sfx.lap();
@@ -887,12 +1011,12 @@ function updateRace(dt, now) {
           ent.finished = true;
           ent.finishTime = tRace;
           net.send({ t: 'finish', id: ent.id, time: tRace });
-          if (!ent.ai) ent.ai = new BotDriver(track, ent.seed);
-          if (isMe) {
+          if (view) {
             const place = ranks.findIndex((r) => r.e === ent) + 1;
-            banner(`FINISH! ${place}${ordinal(place)}`, 0, 'finish');
-            sfx.stopMusic();
+            ent.place = place;
+            viewerSay(view, `FINISH! ${place}${ordinal(place)}`, 0, 'finish');
             sfx.finish();
+            if (race.viewers.every((v) => v.ent.finished)) sfx.stopMusic();
           }
         }
       }
@@ -918,6 +1042,8 @@ function updateRace(dt, now) {
         pt: +v.pt.toFixed(2),
         tr: +v.tr.toFixed(2),
         md: v.md,
+        it: ent.rolling > 0 ? 99 : ent.item ? ITEM_LIST.indexOf(ent.item) + 1 : 0, // shown on the TV
+        u: ent.uses,
         s: +v.s.toFixed(1),
         p: +v.p.toFixed(1),
         sp: v.sp,
@@ -944,15 +1070,16 @@ function updateRace(dt, now) {
 
   const booms = race.hazards.update(dt, now);
   for (const b of booms) {
-    const meV = race.karts.get(app.myId)?.view;
-    const d = meV ? Math.hypot(meV.x - b.x, meV.z - b.z) : 999;
+    let d = 999;
+    for (const v of race.viewers) d = Math.min(d, Math.hypot(v.ent.view.x - b.x, v.ent.view.z - b.z));
     sfx.boom(Math.max(0.15, 1 - d / 80));
     for (const ent of race.karts.values()) {
       const k = ent.sim;
       if (!k || !started) continue;
-      if (Math.hypot(k.x - b.x, k.z - b.z, (k.y - b.y) * 0.5) < BLAST_RADIUS && k.blast(13) && ent.id === app.myId) {
+      const view = race.viewerOf.get(ent.id);
+      if (Math.hypot(k.x - b.x, k.z - b.z, (k.y - b.y) * 0.5) < BLAST_RADIUS && k.blast(13) && view) {
         sfx.hit();
-        if (navigator.vibrate) navigator.vibrate(200);
+        viewerBuzz(view, 200);
       }
     }
   }
@@ -961,39 +1088,74 @@ function updateRace(dt, now) {
   const time = now / 1000;
   for (const ent of race.karts.values()) poseKartMesh(ent.mesh, ent.view, time, dt);
 
-  // HUD
-  const me = race.karts.get(app.myId);
-  if (me) {
-    $('pos').textContent = me.rank;
-    $('posSuffix').textContent = ordinal(me.rank);
-    const lap = me.sim ? lapOf(me.sim.progress, race.laps) : 1;
-    $('lap').textContent = `Lap ${lap}/${race.laps}`;
-    const shown = me.finished ? me.finishTime : Math.max(0, tRace);
-    $('time').textContent = fmtTime(shown);
-    let icon = '';
-    if (me.rolling > 0) icon = ROULETTE[Math.floor(now / 90) % ROULETTE.length];
-    else if (me.item) icon = me.item === 'mushroom3' ? '🍄×' + me.uses : ITEM_ICONS[me.item];
-    const el = $('itemIcon');
-    if (el.textContent !== icon) el.textContent = icon;
-    $('itemBox').classList.toggle('ready', !!me.item && me.rolling <= 0);
-    drawMinimap(race);
-    if (me.sim) {
-      const k = me.sim;
-      sfx.kart({ on: true, speed: k.speed / MAX_SPEED, boost: k.boostTime > 0 || k.rocketTime > 0, drift: k.driftTier, drifting: !!k.driftDir, offroad: k.offroad, air: k.air });
-      const star = (k.starTime > 0 || k.rocketTime > 0) && !me.finished;
-      if (star !== race.starMusic && started && !me.finished) {
-        race.starMusic = star;
-        sfx.music(star ? 'star' : race.song);
-      }
-    }
-    updateChaseCamera(me, dt);
+  // HUDs and cameras for everyone watched on this screen
+  for (const view of race.viewers) {
+    const me = view.ent;
+    const fin = race.finished.get(me.id);
+    const lap = lapOf(me.progress, race.laps);
+    const shown = me.finished ? me.finishTime : fin ? fin.time : Math.max(0, tRace);
+    const icon = me.sim ? itemIcon(me, now) : remoteItemIcon(me.view, now);
+    const rolling = me.sim ? me.rolling > 0 : me.view.it === 99;
+    const h = view.hud;
+    h.pos.textContent = me.rank;
+    h.posSuffix.textContent = ordinal(me.rank);
+    if (h.posOf) h.posOf.textContent = '/' + race.karts.size;
+    h.lap.textContent = `Lap ${lap}/${race.laps}`;
+    h.time.textContent = fmtTime(shown);
+    if (h.itemIcon.textContent !== icon) h.itemIcon.textContent = icon;
+    h.itemBox.classList.toggle('ready', !!icon && !rolling);
+    if (app.mode === 'tv') tvAnnounce(view, lap, fin);
+    updateChaseCamera(view, dt);
+  }
+  drawMinimap(race);
+  const lead = race.viewers[0]?.ent;
+  if (lead && lead.sim) {
+    const k = lead.sim;
+    sfx.kart({ on: true, speed: k.speed / MAX_SPEED, boost: k.boostTime > 0 || k.rocketTime > 0, drift: k.driftTier, drifting: !!k.driftDir, offroad: k.offroad, air: k.air });
+  }
+  // Power-up music while anyone on this screen has a star or rocket
+  const done = (e) => e.finished || race.finished.has(e.id);
+  const star = started && race.viewers.some((v) => !done(v.ent) && (v.ent.view.st || ((v.ent.view.md || 0) & 1)));
+  if (star !== race.starMusic && !race.viewers.every((v) => done(v.ent))) {
+    race.starMusic = star;
+    sfx.music(star ? 'star' : race.song);
   }
 }
 
-function updateChaseCamera(me, dt) {
+// TV: each player's laps and finish come from their phone, so announce them here.
+function tvAnnounce(view, lap, fin) {
   const race = app.race;
-  const v = me.view;
-  const portrait = camera.aspect < 1;
+  if (lap > (view.lastLap || 1)) {
+    view.lastLap = lap;
+    viewerSay(view, lap === race.laps ? 'FINAL LAP!' : `LAP ${lap}`, 1600, 'lap');
+    if (lap === race.laps) {
+      if (!race.finalLapPlayed) sfx.finalLap();
+      race.finalLapPlayed = true;
+      sfx.setTempo(1.12);
+    } else {
+      sfx.lap();
+    }
+  }
+  if (fin && !view.finShown) {
+    view.finShown = true;
+    viewerSay(view, `FINISH! ${fin.place}${ordinal(fin.place)}`, 0, 'finish');
+    sfx.finish();
+    if (race.viewers.every((v) => race.finished.has(v.ent.id))) sfx.stopMusic();
+  }
+}
+
+function remoteItemIcon(v, now) {
+  if (!v || !v.it) return '';
+  if (v.it === 99) return ROULETTE[Math.floor(now / 90) % ROULETTE.length];
+  const item = ITEM_LIST[v.it - 1];
+  if (!item) return '';
+  return item === 'mushroom3' ? '🍄×' + (v.u || 1) : ITEM_ICONS[item];
+}
+
+function updateChaseCamera(view, dt) {
+  const v = view.ent.view;
+  const cam = view.cam;
+  const portrait = cam.aspect < 1;
   const fx = Math.sin(v.h);
   const fz = Math.cos(v.h);
   const md = v.md || 0;
@@ -1002,19 +1164,19 @@ function updateChaseCamera(me, dt) {
   const up = (portrait ? 4 : 3.2) + (md & 1 ? 1.2 : 0) + (md & 2 ? 1.5 : 0);
   // Follow height loosely, but don't dive into a gap after a falling kart.
   const ky = Math.max(v.y || 0, (v.gy ?? v.y ?? 0) - 1, -4);
-  if (race.camY === null) race.camY = ky;
-  race.camY += (ky - race.camY) * (1 - Math.exp(-dt * 5));
-  const target = new THREE.Vector3(v.x - fx * back, race.camY + up + (v.hop || 0) * 0.4, v.z - fz * back);
-  if (!race.camPos) race.camPos = target.clone();
-  race.camPos.lerp(target, 1 - Math.exp(-dt * (md & 1 ? 16 : 7)));
-  camera.position.copy(race.camPos);
-  camera.lookAt(v.x + fx * 5, race.camY + 1.3, v.z + fz * 5);
+  if (view.camY === null) view.camY = ky;
+  view.camY += (ky - view.camY) * (1 - Math.exp(-dt * 5));
+  const target = new THREE.Vector3(v.x - fx * back, view.camY + up + (v.hop || 0) * 0.4, v.z - fz * back);
+  if (!view.camPos) view.camPos = target.clone();
+  view.camPos.lerp(target, 1 - Math.exp(-dt * (md & 1 ? 16 : 7)));
+  cam.position.copy(view.camPos);
+  cam.lookAt(v.x + fx * 5, view.camY + 1.3, v.z + fz * 5);
   const baseFov = portrait ? 80 : 65;
   const speedFov = Math.min(16, Math.max(0, (v.s || 0) - MAX_SPEED * 0.8) * 0.6);
   const fov = baseFov + speedFov;
-  if (Math.abs(camera.fov - fov) > 0.05) {
-    camera.fov += (fov - camera.fov) * Math.min(1, dt * 4);
-    camera.updateProjectionMatrix();
+  if (Math.abs(cam.fov - fov) > 0.05) {
+    cam.fov += (fov - cam.fov) * Math.min(1, dt * 4);
+    cam.updateProjectionMatrix();
   }
 }
 
@@ -1068,10 +1230,11 @@ function drawMinimap(race) {
   ctx.strokeStyle = 'rgba(255,255,255,0.9)';
   ctx.lineWidth = 5;
   ctx.stroke(miniPath);
-  const order = [...race.karts.values()].sort((a, b) => (a.id === app.myId) - (b.id === app.myId));
+  const mine = (e) => race.viewerOf.has(e.id);
+  const order = [...race.karts.values()].sort((a, b) => mine(a) - mine(b));
   for (const ent of order) {
     const [x, y] = miniMap(ent.view.x, ent.view.z);
-    const me = ent.id === app.myId;
+    const me = mine(ent);
     ctx.beginPath();
     ctx.arc(x, y, me ? 7 : 5, 0, Math.PI * 2);
     ctx.fillStyle = ent.color;
@@ -1106,7 +1269,45 @@ function frame(now) {
   } else {
     updateIdleCamera(dt);
   }
-  renderer.render(scene, camera);
+  if (app.race && app.mode === 'tv') {
+    renderSplit(dt);
+  } else {
+    const aspect = canvas.clientWidth / Math.max(1, canvas.clientHeight);
+    if (Math.abs(camera.aspect - aspect) > 0.001) {
+      camera.aspect = aspect;
+      camera.updateProjectionMatrix();
+    }
+    renderer.render(scene, camera);
+  }
+}
+
+// TV mode: draw the scene once per player into their part of the screen.
+function renderSplit(dt) {
+  const race = app.race;
+  const W = canvas.clientWidth;
+  const H = canvas.clientHeight;
+  renderer.setScissorTest(true);
+  const draw = (rect, cam) => {
+    const [x, y, w, h] = rect;
+    const px = Math.round(x * W);
+    const py = Math.round((1 - y - h) * H); // WebGL counts from the bottom
+    const pw = Math.round(w * W);
+    const ph = Math.round(h * H);
+    renderer.setViewport(px, py, pw, ph);
+    renderer.setScissor(px, py, pw, ph);
+    if (Math.abs(cam.aspect - pw / ph) > 0.001) {
+      cam.aspect = pw / ph;
+      cam.updateProjectionMatrix();
+    }
+    renderer.render(scene, cam);
+  };
+  for (const view of race.viewers) draw(view.rect, view.cam);
+  if (race.viewers.length === 3) {
+    updateIdleCamera(dt);
+    draw([0.5, 0.5, 0.5, 0.5], camera);
+  }
+  renderer.setScissorTest(false);
+  renderer.setViewport(0, 0, W, H);
 }
 
 // ------------------------------------------------------------------ boot
