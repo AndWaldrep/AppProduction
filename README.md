@@ -21,6 +21,14 @@ phone) to join. There's nothing to install, and it runs on free GitHub Pages.
     the air
   - 💣 **Bomb**: lob it ahead; it explodes after a moment or when touched
   - 👻 **Ghost**: go see-through and pass through karts, items and boulders
+  - 🐢 **Blue Turtle** (rare): flies to whoever is in 1st and explodes on them
+  - 🪃 **Boomerang**: three throws; it curves out and comes back, hitting
+    anyone in its path both ways
+- Live announcements in the corner: who hit whom with what, who fell in,
+  who finished, and who lost connection
+- 📺 **TV mode**: open the game on a laptop hooked up to a TV and it shows
+  everyone's view split screen (up to 8 players) while you all play on
+  your phones
 - Reconnects on its own if a phone locks or loses signal mid-race
 
 ## How to play
@@ -30,7 +38,8 @@ phone) to join. There's nothing to install, and it runs on free GitHub Pages.
 | Steer | Put a thumb anywhere on the left half and drag left/right | ← → or A/D |
 | Accelerate | Automatic | Automatic |
 | Drift / hop | Hold **DRIFT** while turning, release for a boost | Space |
-| Use item | **ITEM** | Shift, E or X |
+| Use item | Tap **ITEM** | Shift, E or X |
+| Throw behind / ahead | Swipe **ITEM** down / up | Q (behind) |
 | Brake / reverse | **BRAKE** | ↓ or S |
 
 Drift longer to charge the sparks from blue to orange for a bigger boost.
@@ -44,6 +53,19 @@ Turn your phone sideways for the widest view. It works upright too.
    pick Messages. You can also use **Open Messages** or **Copy link**.
 3. Your friend taps the link, types a name, and taps **Join race**.
 4. As host, pick the track, laps and CPU racers, then tap **Start race!**
+
+## Big game night (up to 8 players)
+
+- **Host from the steadiest device.** The host's device runs the race for
+  everyone. A laptop in TV mode is best: it's plugged in, on Wi-Fi, and
+  never auto-locks. If a phone hosts, keep it plugged in.
+- **Everyone on the same Wi-Fi** if you can. The lobby shows "📶 Connected
+  directly" when it's working well. "Through a relay server" still works
+  but depends on a free relay. Avoid guest/hotel Wi-Fi that blocks devices
+  from seeing each other.
+- **Reload the page before playing** so everyone has the latest version.
+- Keep the game open: switching apps mid-race drops you (it reconnects
+  when you come back, and your spot is kept for 3 minutes).
 
 ## Putting it online with GitHub Pages (free)
 

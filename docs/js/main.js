@@ -2,12 +2,14 @@ import * as THREE from 'three';
 import { Track, ROLLER_RADIUS } from './track.js';
 import { TRACKS } from './tracks.js';
 import { KartSim, BotDriver, buildKartMesh, poseKartMesh, MAX_SPEED } from './kart.js';
-import { ItemBoxes, Hazards, rollItem, ITEM_ICONS, ITEM_TIPS, ROULETTE, BLAST_RADIUS } from './items.js';
+import { ItemBoxes, Hazards, rollItem, ITEM_ICONS, ITEM_TIPS, ROULETTE, THROWABLE } from './items.js';
 
 const ITEM_LIST = Object.keys(ITEM_ICONS); // item numbers sent over the network
 import { Input } from './input.js';
 import { Net } from './net.js';
 import { sfx } from './audio.js';
+import { packKart, unpackKart } from './proto.js';
+import { RESULTS_TIMEOUT_MS } from './room.js';
 import qrcode from '../vendor/qrcode.js';
 
 const COLORS = ['#e53935', '#1e88e5', '#43a047', '#fdd835', '#8e24aa', '#fb8c00', '#00acc1', '#f06292'];
@@ -366,6 +368,14 @@ net.on('error', (msg) => {
 });
 
 net.on('room', (room) => {
+  // Mid-race, announce players dropping out and coming back.
+  if (app.race && app.room) {
+    for (const p of room.players) {
+      const before = app.room.players.find((x) => x.id === p.id);
+      if (before && before.connected && !p.connected && app.race.karts.has(p.id)) feed(`📵 ${feedName(p.id)} lost connection`);
+      if (before && !before.connected && p.connected && app.race.karts.has(p.id)) feed(`✅ ${feedName(p.id)} is back`);
+    }
+  }
   app.room = room;
   const mode = room.tv && room.hostId === app.myId ? 'tv' : 'phone';
   if (mode !== app.mode) setMode(mode);
@@ -393,7 +403,9 @@ net.on('start', (msg) => beginRace(msg));
 net.on('s', (msg) => {
   const race = app.race;
   if (!race) return;
-  for (const k of msg.k) {
+  for (const a of msg.k) {
+    const k = unpackKart(a);
+    if (!k) continue;
     const ent = race.karts.get(k.id);
     if (!ent || ent.sim) continue;
     const last = ent.snaps[ent.snaps.length - 1];
@@ -409,7 +421,10 @@ net.on('e', (msg) => {
   if (!race) return;
   const now = performance.now();
   if (msg.type === 'box') race.boxes.take(msg.i, now);
-  else if (msg.type === 'spawn') race.hazards.add({ ...msg, idx: -1 }, now);
+  else if (msg.type === 'spawn') {
+    race.hazards.add({ ...msg, idx: -1 }, now);
+    if (msg.kind === 'blueshell') race.lastBlueAt = now;
+  } else if (msg.type === 'ko') feed(koText(msg));
   else if (msg.type === 'hit') race.hazards.remove(msg.hid);
   else if (msg.type === 'boom') race.hazards.explode(msg.hid);
 });
@@ -419,7 +434,11 @@ net.on('fin', (msg) => {
   if (!race) return;
   race.finished.set(msg.id, msg);
   const ent = race.karts.get(msg.id);
-  if (ent && msg.id !== app.myId && !ent.bot) toast(`${ent.name} finished ${msg.place}${ordinal(msg.place)}!`);
+  if (ent) feed(`🏁 ${feedName(msg.id)} finished ${msg.place}${ordinal(msg.place)}`);
+  if (ent && !ent.bot && !race.firstHumanDone) {
+    race.firstHumanDone = true;
+    if (!race.finished.has(app.myId) && race.karts.has(app.myId)) feed(`⏱️ ${RESULTS_TIMEOUT_MS / 1000} seconds left to finish!`);
+  }
 });
 
 net.on('results', (msg) => {
@@ -537,12 +556,10 @@ function beginRace(msg) {
 
 // Who is watching on this screen. A phone shows its own kart full screen; the TV
 // splits the screen between every player, each with their own camera and display.
-const TV_LAYOUTS = {
-  1: [[0, 0, 1, 1]],
-  2: [[0, 0, 0.5, 1], [0.5, 0, 0.5, 1]],
-  3: [[0, 0, 0.5, 0.5], [0.5, 0, 0.5, 0.5], [0, 0.5, 0.5, 0.5], [0.5, 0.5, 0.5, 0.5]],
-  4: [[0, 0, 0.5, 0.5], [0.5, 0, 0.5, 0.5], [0, 0.5, 0.5, 0.5], [0.5, 0.5, 0.5, 0.5]],
-};
+// Split-screen grid for n players: [columns, rows].
+function tvGrid(n) {
+  return n <= 1 ? [1, 1] : n === 2 ? [2, 1] : n <= 4 ? [2, 2] : n <= 6 ? [3, 2] : [4, 2];
+}
 function setupViewers(race, msg) {
   race.viewers = [];
   race.viewerOf = new Map();
@@ -557,10 +574,12 @@ function setupViewers(race, msg) {
     race.viewerOf.set(me.id, view);
     return;
   }
-  const humans = msg.karts.filter((k) => !k.bot).map((k) => race.karts.get(k.id));
-  const layout = TV_LAYOUTS[Math.max(1, Math.min(4, humans.length))];
-  humans.slice(0, 4).forEach((ent, i) => {
-    const [x, y, w, h] = layout[i];
+  const humans = msg.karts.filter((k) => !k.bot).map((k) => race.karts.get(k.id)).slice(0, 8);
+  const [cols, rows] = tvGrid(humans.length);
+  const cell = (i) => [(i % cols) / cols, Math.floor(i / cols) / rows, 1 / cols, 1 / rows];
+  tvHud.className = humans.length > 4 ? 'small' : '';
+  humans.forEach((ent, i) => {
+    const [x, y, w, h] = cell(i);
     const el = document.createElement('div');
     el.className = 'tvView';
     Object.assign(el.style, { left: x * 100 + '%', top: y * 100 + '%', width: w * 100 + '%', height: h * 100 + '%' });
@@ -574,15 +593,17 @@ function setupViewers(race, msg) {
     tvHud.appendChild(el);
     const q = (sel) => el.querySelector(sel);
     const hud = { pos: q('.tvPos span'), posSuffix: q('.tvPos sup'), lap: q('.tvLap div'), time: q('.tvTime'), itemIcon: q('.tvItem span'), itemBox: q('.tvItem'), banner: q('.tvBanner') };
-    const view = { ent, cam: new THREE.PerspectiveCamera(70, w / h, 0.5, 2000), rect: layout[i], hud, camPos: null, camY: null };
+    const view = { ent, cam: new THREE.PerspectiveCamera(70, w / h, 0.5, 2000), rect: cell(i), hud, camPos: null, camY: null };
     race.viewers.push(view);
     race.viewerOf.set(ent.id, view);
   });
-  // With three players the fourth quarter shows a fly-over of the track.
-  if (humans.length === 3) {
+  // A spare square in the grid shows a fly-over of the track.
+  race.overview = humans.length < cols * rows ? cell(humans.length) : null;
+  if (race.overview) {
+    const [x, y, w, h] = race.overview;
     const el = document.createElement('div');
     el.className = 'tvView overview';
-    Object.assign(el.style, { left: '50%', top: '50%', width: '50%', height: '50%' });
+    Object.assign(el.style, { left: x * 100 + '%', top: y * 100 + '%', width: w * 100 + '%', height: h * 100 + '%' });
     tvHud.appendChild(el);
   }
 }
@@ -694,18 +715,33 @@ function showItemTip(item) {
   toast(ITEM_TIPS[item], 3500);
 }
 
-function spawnHazard(ent, kind, x, z, vx, vz) {
+function spawnHazard(ent, kind, x, z, vx, vz, extra = {}) {
   const race = app.race;
   const hid = `${app.myId}-${++race.hidCounter}`;
-  const h = { hid, kind, x, z, vx, vz, owner: ent.id };
+  const h = { hid, kind, x, z, vx, vz, owner: ent.id, ...extra };
   race.hazards.add({ ...h, idx: ent.sim.idx }, performance.now());
   net.send({ t: 'e', type: 'spawn', ...h });
+  if (kind === 'blueshell') race.lastBlueAt = performance.now();
 }
 
-function useItem(ent) {
+// Whoever is in 1st (and still racing), other than the thrower: the blue turtle's target.
+function leaderFor(ent) {
+  for (const r of rankings(app.race)) if (!r.fin && !r.e.finished && r.e !== ent) return r.e;
+  return null;
+}
+
+// Blue turtles are rare: never two in the air, and a cool-down after each one.
+function blueAllowed(race, now) {
+  return ![...race.hazards.list.values()].some((h) => h.kind === 'blueshell') && now - (race.lastBlueAt ?? -1e9) > 25000;
+}
+
+// dir: 'tap' (the item's usual direction), 'fwd' (swiped up) or 'back' (swiped down).
+function useItem(ent, dir = 'tap') {
   const sim = ent.sim;
   const fx = Math.sin(sim.h);
   const fz = Math.cos(sim.h);
+  const back = dir === 'back';
+  const s = back ? -1 : 1;
   switch (ent.item) {
     case 'mushroom':
     case 'mushroom3':
@@ -715,11 +751,13 @@ function useItem(ent) {
       sim.star();
       break;
     case 'banana':
-      spawnHazard(ent, 'banana', sim.x - fx * 2.8, sim.z - fz * 2.8, 0, 0);
+      // Dropped behind, unless swiped up to toss it ahead.
+      if (dir === 'fwd') spawnHazard(ent, 'banana', sim.x + fx * 14, sim.z + fz * 14, 0, 0);
+      else spawnHazard(ent, 'banana', sim.x - fx * 2.8, sim.z - fz * 2.8, 0, 0);
       break;
     case 'shell': {
-      const sp = Math.max(0, sim.speed) + 30;
-      spawnHazard(ent, 'shell', sim.x + fx * 2.8, sim.z + fz * 2.8, fx * sp, fz * sp);
+      const sp = back ? 28 : Math.max(0, sim.speed) + 30;
+      spawnHazard(ent, 'shell', sim.x + s * fx * 2.8, sim.z + s * fz * 2.8, s * fx * sp, s * fz * sp);
       break;
     }
     case 'rocket':
@@ -732,11 +770,21 @@ function useItem(ent) {
       sim.ghost();
       break;
     case 'tornado':
-      spawnHazard(ent, 'tornado', sim.x + fx * 5, sim.z + fz * 5, 0, 0);
+      spawnHazard(ent, 'tornado', sim.x + s * fx * 5, sim.z + s * fz * 5, 0, 0, { dir: s });
       break;
     case 'bomb': {
-      const sp = Math.max(0, sim.speed) * 0.5 + 18;
-      spawnHazard(ent, 'bomb', sim.x + fx * 3, sim.z + fz * 3, fx * sp, fz * sp);
+      const sp = back ? 10 : Math.max(0, sim.speed) * 0.5 + 18;
+      spawnHazard(ent, 'bomb', sim.x + s * fx * 3, sim.z + s * fz * 3, s * fx * sp, s * fz * sp);
+      break;
+    }
+    case 'boomerang': {
+      const sp = 42 + (back ? 0 : Math.max(0, sim.speed) * 0.4);
+      spawnHazard(ent, 'boomerang', sim.x + s * fx * 2.8, sim.z + s * fz * 2.8, s * fx * sp, s * fz * sp);
+      break;
+    }
+    case 'blueshell': {
+      const target = leaderFor(ent);
+      if (target) spawnHazard(ent, 'blueshell', sim.x, sim.z, 0, 0, { tg: target.id });
       break;
     }
   }
@@ -746,42 +794,87 @@ function useItem(ent) {
   ent.itemAge = 0;
 }
 
+// Is there a kart close ahead of / behind this one?
+function kartNear(ent, race, behind) {
+  const sim = ent.sim;
+  const fx = Math.sin(sim.h);
+  const fz = Math.cos(sim.h);
+  for (const o of race.karts.values()) {
+    if (o === ent) continue;
+    const dx = o.view.x - sim.x;
+    const dz = o.view.z - sim.z;
+    const d = Math.hypot(dx, dz);
+    const cos = (dx * fx + dz * fz) / (d || 1);
+    if (!behind && d > 4 && d < 40 && cos > 0.97) return true;
+    if (behind && d > 3 && d < 25 && cos < -0.9) return true;
+  }
+  return false;
+}
+
+// CPU racers: whether to use their item now, and which way ('tap', 'fwd', 'back').
 function botWantsItem(ent, dt, corner, race) {
   ent.itemAge += dt;
   const a = ent.itemAge;
   switch (ent.item) {
     case 'star':
     case 'rocket':
-      return a > 0.6;
+      return a > 0.6 && 'tap';
     case 'glider':
-      return a > 1 && corner < 0.2;
+      return a > 1 && corner < 0.2 && 'tap';
     case 'ghost':
-      return a > 1.5;
+      return a > 1.5 && 'tap';
     case 'tornado':
-      return a > 1;
-    case 'bomb':
+    case 'blueshell':
+      return a > 1 && 'tap';
     case 'mushroom':
     case 'mushroom3':
-      return a > 1 && corner < 0.15;
+      return a > 1 && corner < 0.15 && 'tap';
     case 'banana':
-      return a > 2.5 + (ent.seed % 3);
-    case 'shell': {
-      if (a > 7) return true;
-      const sim = ent.sim;
-      const fx = Math.sin(sim.h);
-      const fz = Math.cos(sim.h);
-      for (const o of race.karts.values()) {
-        if (o === ent) continue;
-        const v = o.view;
-        const dx = v.x - sim.x;
-        const dz = v.z - sim.z;
-        const d = Math.hypot(dx, dz);
-        if (d > 4 && d < 40 && (dx * fx + dz * fz) / d > 0.97) return a > 0.5;
-      }
-      return false;
-    }
+      if (a > 0.8 && kartNear(ent, race, true)) return 'back';
+      return a > 2.5 + (ent.seed % 3) && 'tap';
+    case 'shell':
+    case 'bomb':
+    case 'boomerang':
+      if (a > 0.5 && kartNear(ent, race, false)) return 'fwd';
+      if (a > 0.8 && kartNear(ent, race, true)) return 'back';
+      return a > 7 && 'tap';
   }
   return false;
+}
+
+// ---- Live announcements: who hit whom with what, falls, finishes, connections
+
+const FEED_ICONS = { banana: '🍌', shell: '🐢', blueshell: '<span class="blue">🐢</span>', bomb: '💣', tornado: '🌪️', boomerang: '🪃', star: '⭐', rocket: '🚀' };
+function feedName(id) {
+  const e = app.race?.karts.get(id);
+  const p = e ? null : app.room?.players.find((x) => x.id === id);
+  const name = e ? e.name : p ? p.name : '?';
+  const color = e ? e.color : p ? p.color : '#fff';
+  return `<b style="color:${color}">${escapeHtml(name)}</b>`;
+}
+function feed(html) {
+  const box = $('feed');
+  const line = document.createElement('div');
+  line.className = 'feedLine';
+  line.innerHTML = html;
+  box.appendChild(line);
+  while (box.children.length > 5) box.firstChild.remove();
+  setTimeout(() => line.classList.add('gone'), 5000);
+  setTimeout(() => line.remove(), 5600);
+}
+function koText({ v, a, w }) {
+  const V = feedName(v);
+  if (w === 'fall') return `${V} fell in 💦`;
+  if (w === 'roller') return `${V} got flattened ${app.track?.def.theme === 'snow' ? '☃️' : '🪨'}`;
+  const icon = FEED_ICONS[w] || '💥';
+  if (!a || a === v) return `${V} ${icon} oops!`;
+  return `${feedName(a)} ${icon} ${V}`;
+}
+// One of our karts got knocked out: tell everyone.
+function reportKo(v, a, w) {
+  const ko = { v, a: a || '', w };
+  feed(koText(ko));
+  net.send({ t: 'e', type: 'ko', ...ko });
 }
 
 function remoteView(ent, renderT) {
@@ -900,7 +993,7 @@ function updateRace(dt, now) {
     }
     const others = [];
     for (const o of race.karts.values()) {
-      if (o !== ent) others.push({ x: o.view.x, y: o.view.y || 0, z: o.view.z, star: !!o.view.st || ((o.view.md || 0) & 1) !== 0, ghost: ((o.view.md || 0) & 4) !== 0 });
+      if (o !== ent) others.push({ id: o.id, x: o.view.x, y: o.view.y || 0, z: o.view.z, star: !!o.view.st || ((o.view.md || 0) & 1) !== 0, rocket: ((o.view.md || 0) & 1) !== 0, ghost: ((o.view.md || 0) & 4) !== 0 });
     }
     sim.update(dt, ctl, others);
 
@@ -923,6 +1016,13 @@ function updateRace(dt, now) {
         else if (ev === 'ghost') sfx.ghost();
       }
     }
+    for (const ev of sim.events) {
+      if (ev === 'fall') reportKo(ent.id, '', 'fall');
+      else if (ev === 'hit' && sim.lastHitBy) {
+        reportKo(ent.id, sim.lastHitBy, sim.lastHitWith);
+        sim.lastHitBy = null;
+      }
+    }
     sim.events.length = 0;
 
     // Rolling boulders / snowballs (positions come from the shared race clock)
@@ -935,10 +1035,13 @@ function updateRace(dt, now) {
         if (d < ROLLER_RADIUS + 1.1 && Math.abs(sim.y + 0.6 - p.y) < ROLLER_RADIUS + 0.8 && d > 0.01) {
           sim.kx += (dx / d) * 14;
           sim.kz += (dz / d) * 14;
-          if (sim.starTime <= 0 && sim.hit() && view) {
-            sfx.roller();
-            sfx.hit();
-            viewerBuzz(view, 120);
+          if (sim.starTime <= 0 && sim.hit()) {
+            reportKo(ent.id, '', 'roller');
+            if (view) {
+              sfx.roller();
+              sfx.hit();
+              viewerBuzz(view, 120);
+            }
           }
         }
       }
@@ -951,7 +1054,7 @@ function updateRace(dt, now) {
         net.send({ t: 'e', type: 'box', i: box });
         if (!ent.item && ent.rolling <= 0) {
           ent.rolling = 1.1;
-          ent.pending = rollItem(ent.rank || race.karts.size, race.karts.size);
+          ent.pending = rollItem(ent.rank || race.karts.size, race.karts.size, !blueAllowed(race, now));
           if (view) sfx.pickup();
         }
       }
@@ -959,11 +1062,12 @@ function updateRace(dt, now) {
         ent.rolling -= dt;
         if (ent.rolling <= 0) {
           ent.item = ent.pending;
-          ent.uses = ent.item === 'mushroom3' ? 3 : 1;
+          ent.uses = ent.item === 'mushroom3' || ent.item === 'boomerang' ? 3 : 1;
           ent.itemAge = 0;
           if (view) {
             sfx.itemReady();
-            showItemTip(ent.item);
+            if (ITEM_TIPS[ent.item] && !tipsShown.has(ent.item)) showItemTip(ent.item);
+            else if (THROWABLE.has(ent.item)) showItemTip('throw');
           }
         } else if (view && now - race.lastTick > 90) {
           race.lastTick = now;
@@ -971,14 +1075,14 @@ function updateRace(dt, now) {
         }
       }
       const wants = human ? human.useItem : ent.item && botWantsItem(ent, dt, corner, race);
-      if (wants && ent.item && sim.spinTime <= 0 && (!sim.falling || ent.item === 'rocket')) useItem(ent);
+      if (wants && ent.item && sim.spinTime <= 0 && (!sim.falling || ent.item === 'rocket')) useItem(ent, wants);
 
       // Bananas, shells, tornadoes and bombs
       const hz = sim.ghostTime > 0 ? null : race.hazards.collide(ent.id, sim.x, sim.y, sim.z, now);
       if (hz) {
         let hurt = false;
         if (hz.effect === 'spin') {
-          net.send({ t: 'e', type: 'hit', hid: hz.h.hid });
+          if (!hz.keep) net.send({ t: 'e', type: 'hit', hid: hz.h.hid }); // boomerangs keep flying
           hurt = sim.hit();
         } else if (hz.effect === 'boom') {
           net.send({ t: 'e', type: 'boom', hid: hz.h.hid });
@@ -987,6 +1091,7 @@ function updateRace(dt, now) {
           hurt = sim.blast(14);
           if (hurt && view) sfx.tornado();
         }
+        if (hurt) reportKo(ent.id, hz.h.owner, hz.h.kind);
         if (hurt && view) {
           sfx.hit();
           viewerBuzz(view, 120);
@@ -1031,30 +1136,15 @@ function updateRace(dt, now) {
     const k = [];
     for (const ent of race.karts.values()) {
       if (!ent.sim) continue;
-      const v = ent.view;
-      k.push({
+      k.push(packKart({
+        ...ent.view,
         id: ent.id,
-        ts: Math.round(sNow),
-        x: +v.x.toFixed(2),
-        z: +v.z.toFixed(2),
-        h: +v.h.toFixed(3),
-        y: +v.y.toFixed(2),
-        pt: +v.pt.toFixed(2),
-        tr: +v.tr.toFixed(2),
-        md: v.md,
-        it: ent.rolling > 0 ? 99 : ent.item ? ITEM_LIST.indexOf(ent.item) + 1 : 0, // shown on the TV
+        ts: sNow,
+        it: ent.rolling > 0 ? 99 : ent.item ? ITEM_LIST.indexOf(ent.item) + 1 : 0, // shown to others and on the TV
         u: ent.uses,
-        s: +v.s.toFixed(1),
-        p: +v.p.toFixed(1),
-        sp: v.sp,
-        st: v.st,
-        b: v.b,
-        dd: v.dd,
-        dc: v.dc,
-        hop: +v.hop.toFixed(2),
-      });
+      }));
     }
-    if (k.length) net.send({ t: 's', k });
+    if (k.length) net.sendState({ t: 's', k });
   }
 
   // Remote karts
@@ -1068,7 +1158,10 @@ function updateRace(dt, now) {
     if (ent.view.y === undefined) ent.view.y = ent.view.gy ?? 0;
   }
 
-  const booms = race.hazards.update(dt, now);
+  const booms = race.hazards.update(dt, now, (id) => {
+    const e = race.karts.get(id);
+    return e ? { x: e.view.x, y: e.view.y || 0, z: e.view.z, p: e.progress } : null;
+  });
   for (const b of booms) {
     let d = 999;
     for (const v of race.viewers) d = Math.min(d, Math.hypot(v.ent.view.x - b.x, v.ent.view.z - b.z));
@@ -1077,9 +1170,12 @@ function updateRace(dt, now) {
       const k = ent.sim;
       if (!k || !started) continue;
       const view = race.viewerOf.get(ent.id);
-      if (Math.hypot(k.x - b.x, k.z - b.z, (k.y - b.y) * 0.5) < BLAST_RADIUS && k.blast(13) && view) {
-        sfx.hit();
-        viewerBuzz(view, 200);
+      if (Math.hypot(k.x - b.x, k.z - b.z, (k.y - b.y) * 0.5) < b.radius && k.blast(13)) {
+        reportKo(ent.id, b.owner, b.kind);
+        if (view) {
+          sfx.hit();
+          viewerBuzz(view, 200);
+        }
       }
     }
   }
@@ -1103,6 +1199,8 @@ function updateRace(dt, now) {
     h.lap.textContent = `Lap ${lap}/${race.laps}`;
     h.time.textContent = fmtTime(shown);
     if (h.itemIcon.textContent !== icon) h.itemIcon.textContent = icon;
+    const kind = rolling ? null : me.sim ? me.item : ITEM_LIST[(me.view.it || 0) - 1];
+    h.itemIcon.classList.toggle('blue', kind === 'blueshell');
     h.itemBox.classList.toggle('ready', !!icon && !rolling);
     if (app.mode === 'tv') tvAnnounce(view, lap, fin);
     updateChaseCamera(view, dt);
@@ -1302,9 +1400,9 @@ function renderSplit(dt) {
     renderer.render(scene, cam);
   };
   for (const view of race.viewers) draw(view.rect, view.cam);
-  if (race.viewers.length === 3) {
+  if (race.overview) {
     updateIdleCamera(dt);
-    draw([0.5, 0.5, 0.5, 0.5], camera);
+    draw(race.overview, camera);
   }
   renderer.setScissorTest(false);
   renderer.setViewport(0, 0, W, H);

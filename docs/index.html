@@ -60,7 +60,7 @@
         <div>
           <p class="qrTitle">Scan with your phone camera to join the race</p>
           <p class="qrUrl" id="qrUrl"></p>
-          <p class="hint">Up to 4 players. Play on your phone, and the TV shows everyone's view.</p>
+          <p class="hint">Up to 8 players. Play on your phone, and the TV shows everyone's view.</p>
         </div>
       </div>
       <p id="padNote" class="invited" hidden>📺 This race is on the big screen too!</p>
@@ -117,6 +117,7 @@
       <div id="lapBox"><div id="lap">Lap 1/3</div><div id="time">0:00.00</div></div>
     </div>
     <canvas id="minimap" width="150" height="150"></canvas>
+    <div id="feed" aria-live="polite"></div>
     <div id="tvHud"></div>
     <div id="banner"></div>
     <div id="controls">
@@ -125,7 +126,7 @@
         <div id="stickBase"><div id="stickKnob"></div></div>
       </div>
       <div id="buttons">
-        <button id="btnItem" class="ctl item">ITEM</button>
+        <button id="btnItem" class="ctl item">ITEM<small>↕ swipe</small></button>
         <button id="btnDrift" class="ctl drift">DRIFT</button>
         <button id="btnBrake" class="ctl brake">BRAKE</button>
       </div>

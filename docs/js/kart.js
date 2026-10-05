@@ -543,7 +543,11 @@ export class KartSim {
           this.kx += nx * push;
           this.kz += nz * push;
           if (o.star && this.starTime <= 0) {
-            if (this.hit()) this.events.push('hit');
+            if (this.hit()) {
+              this.lastHitBy = o.id; // for the announcements
+              this.lastHitWith = o.rocket ? 'rocket' : 'star';
+              this.events.push('hit');
+            }
           } else if (!this._bumpCooldown) {
             this.speed *= 0.88;
             this.events.push('bump');

@@ -11,7 +11,12 @@ export const ITEM_ICONS = {
   ghost: '👻',
   tornado: '🌪️',
   bomb: '💣',
+  // Newer items go at the end: the position in this list is the item's number on the network.
+  blueshell: '🐢',
+  boomerang: '🪃',
 };
+// Throwable items: swipe the ITEM button down to throw behind you, up to throw ahead.
+export const THROWABLE = new Set(['banana', 'shell', 'bomb', 'tornado', 'boomerang']);
 // What each newer item does, shown the first time you get one.
 export const ITEM_TIPS = {
   rocket: '🚀 Rocket! Tap ITEM to blast down the track on autopilot',
@@ -19,25 +24,33 @@ export const ITEM_TIPS = {
   ghost: '👻 Ghost! Tap ITEM to pass right through everything',
   tornado: '🌪️ Tornado! Tap ITEM to send a twister up the track',
   bomb: '💣 Bomb! Tap ITEM to lob it ahead. Boom!',
+  blueshell: '🐢 Blue Turtle! It flies to whoever is in 1st and explodes',
+  boomerang: '🪃 Boomerang! 3 throws, and it comes back to you',
+  throw: '👆 Swipe ITEM ↓ to throw behind you, ↑ to throw ahead',
 };
-export const ROULETTE = ['🍌', '🐢', '🍄', '⭐', '🚀', '🪂', '👻', '🌪️', '💣'];
+export const ROULETTE = ['🍌', '🐢', '🍄', '⭐', '🚀', '🪂', '👻', '🌪️', '💣', '🪃'];
 const BOX_RESPAWN_MS = 3000;
 const MAX_BANANAS = 40;
 const TORNADO_SPEED = 44; // faster than a kart, so it catches whoever is ahead
 const TORNADO_LIFE_MS = 8000;
 const BOMB_FUSE_MS = 2400;
 export const BLAST_RADIUS = 8;
+export const BLUE_BLAST_RADIUS = 9;
+const BLUE_SPEED = 62;
+const BOOMERANG_SPEED = 42;
 
 // Back-of-the-pack racers get better items, like the real thing.
-export function rollItem(rank, total) {
+// `noBlue`: a blue turtle is already flying (or just was), so don't hand out another.
+export function rollItem(rank, total, noBlue = false) {
   const f = total > 1 ? (rank - 1) / (total - 1) : 0.5;
   const table = f < 0.2
-    ? [['banana', 38], ['shell', 28], ['mushroom', 14], ['bomb', 12], ['ghost', 8]]
+    ? [['banana', 34], ['shell', 24], ['mushroom', 12], ['bomb', 10], ['ghost', 8], ['boomerang', 12]]
     : f < 0.7
-      ? [['banana', 14], ['shell', 22], ['mushroom', 16], ['mushroom3', 8], ['bomb', 12], ['tornado', 10], ['ghost', 8], ['glider', 6], ['star', 4]]
-      : [['shell', 10], ['mushroom', 10], ['mushroom3', 14], ['star', 12], ['rocket', 18], ['glider', 16], ['tornado', 12], ['ghost', 8]];
-  let r = Math.random() * table.reduce((a, [, w]) => a + w, 0);
-  for (const [item, w] of table) {
+      ? [['banana', 12], ['shell', 18], ['mushroom', 14], ['mushroom3', 8], ['bomb', 11], ['tornado', 9], ['ghost', 7], ['glider', 6], ['star', 4], ['boomerang', 10], ['blueshell', 1]]
+      : [['shell', 8], ['mushroom', 9], ['mushroom3', 12], ['star', 11], ['rocket', 16], ['glider', 14], ['tornado', 10], ['ghost', 6], ['boomerang', 6], ['blueshell', 3]];
+  const items = noBlue ? table.filter(([item]) => item !== 'blueshell') : table;
+  let r = Math.random() * items.reduce((a, [, w]) => a + w, 0);
+  for (const [item, w] of items) {
     if ((r -= w) < 0) return item;
   }
   return 'mushroom';
@@ -134,6 +147,10 @@ const twisterMat = new THREE.MeshLambertMaterial({ color: '#cfd8dc', transparent
 const bombMat = new THREE.MeshLambertMaterial({ color: '#212121' });
 const fuseMat = new THREE.MeshBasicMaterial({ color: '#ff3d00' });
 const blastMat = new THREE.MeshBasicMaterial({ color: '#ff9100', transparent: true, opacity: 0.8, depthWrite: false });
+const blueMat = new THREE.MeshLambertMaterial({ color: '#1e5bff', emissive: '#0a2a99', emissiveIntensity: 0.6 });
+const spikeMat = new THREE.MeshLambertMaterial({ color: '#ffffff' });
+const wingMat = new THREE.MeshLambertMaterial({ color: '#ffffff', side: THREE.DoubleSide });
+const woodMat = new THREE.MeshLambertMaterial({ color: '#c77d3a', emissive: '#4a2a10', emissiveIntensity: 0.4 });
 
 function hazardMesh(kind) {
   const mesh = new THREE.Group();
@@ -148,6 +165,38 @@ function hazardMesh(kind) {
       cone.position.y = 0.8 + i * 1.5;
       mesh.add(cone);
     }
+  } else if (kind === 'blueshell') {
+    const top = new THREE.Mesh(new THREE.SphereGeometry(1.0, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2), blueMat);
+    mesh.add(top);
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(1.0, 0.2, 6, 18), spikeMat);
+    rim.rotation.x = Math.PI / 2;
+    mesh.add(rim);
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      const spike = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.55, 6), spikeMat);
+      spike.position.set(Math.cos(a) * 0.65, 0.75, Math.sin(a) * 0.65);
+      spike.rotation.set(Math.sin(a) * 0.6, 0, -Math.cos(a) * 0.6);
+      mesh.add(spike);
+    }
+    const wings = [-1, 1].map((sd) => {
+      const w = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 0.7), wingMat);
+      w.geometry.translate(sd * 0.8, 0, 0);
+      w.position.set(sd * 0.9, 0.3, 0);
+      mesh.add(w);
+      return w;
+    });
+    mesh.userData.wings = wings;
+  } else if (kind === 'boomerang') {
+    const spin = new THREE.Group();
+    for (const sd of [-1, 1]) {
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.12, 0.4), woodMat);
+      arm.position.set(sd * 0.55, 0, sd * 0.25);
+      arm.rotation.y = sd * 0.55;
+      spin.add(arm);
+    }
+    spin.position.y = 1.2;
+    mesh.add(spin);
+    mesh.userData.spin = spin;
   } else if (kind === 'bomb') {
     const ball = new THREE.Mesh(new THREE.SphereGeometry(0.75, 14, 10), bombMat);
     ball.position.y = 0.75;
@@ -179,10 +228,11 @@ export class Hazards {
     this.booms = []; // explosions that happened since the last update()
   }
 
-  add({ hid, kind, x, z, vx = 0, vz = 0, owner, idx = -1 }, now) {
+  add({ hid, kind, x, z, vx = 0, vz = 0, owner, idx = -1, dir = 1, tg = null }, now) {
     if (this.list.has(hid)) return;
     const n = this.track.nearest(x, z, idx);
-    if (this.track.isGap(n.frac) && kind !== 'tornado' && kind !== 'bomb') return; // falls in
+    const flies = kind === 'tornado' || kind === 'bomb' || kind === 'blueshell' || kind === 'boomerang';
+    if (this.track.isGap(n.frac) && !flies) return; // falls in
     idx = n.idx;
     const y = this.track.heightAt(n.frac);
     const mesh = hazardMesh(kind);
@@ -193,6 +243,16 @@ export class Hazards {
       h.prog = n.frac;
       h.lat = n.lat;
       h.seed = (hid.length * 7) % 10;
+      h.dir = dir < 0 ? -1 : 1;
+    }
+    if (kind === 'blueshell') {
+      h.prog = n.frac;
+      h.tg = tg;
+      h.y += 6;
+    }
+    if (kind === 'boomerang') {
+      h.hits = new Set();
+      h.y += 0.2;
     }
     if (kind === 'bomb') {
       h.vy = 9; // lobbed in an arc
@@ -217,15 +277,19 @@ export class Hazards {
     const h = this.list.get(hid);
     if (!h) return;
     this.remove(hid);
-    this.booms.push({ x: h.x, y: h.y, z: h.z, owner: h.owner });
-    const fx = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), blastMat.clone());
+    const blue = h.kind === 'blueshell';
+    this.booms.push({ x: h.x, y: h.y, z: h.z, owner: h.owner, kind: h.kind, radius: blue ? BLUE_BLAST_RADIUS : BLAST_RADIUS });
+    const mat = blastMat.clone();
+    if (blue) mat.color.set('#4fc3f7');
+    const fx = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), mat);
     fx.position.set(h.x, h.y + 1, h.z);
     this.scene.add(fx);
     this.blasts.push({ mesh: fx, age: 0 });
   }
 
-  // Moves everything; returns the explosions that happened.
-  update(dt, now) {
+  // Moves everything; returns the explosions that happened. `kart(id)` gives where a
+  // kart is ({x, y, z, p}), for the blue turtle and boomerangs coming back.
+  update(dt, now, kart = () => null) {
     const t = this.track;
     for (const h of [...this.list.values()]) {
       const age = now - h.born;
@@ -234,7 +298,7 @@ export class Hazards {
         continue;
       }
       if (h.kind === 'tornado') {
-        h.prog += (TORNADO_SPEED * dt) / t.spacing;
+        h.prog += (h.dir * TORNADO_SPEED * dt) / t.spacing;
         const i = t.wrap(Math.floor(h.prog));
         const lat = Math.sin(age / 600 + h.seed) * (t.halfWidth - 2);
         h.x = t.px[i] + t.nx[i] * lat;
@@ -244,6 +308,78 @@ export class Hazards {
         h.mesh.children.forEach((c, k) => (c.rotation.y += dt * (8 + k * 2)));
         h.mesh.rotation.z = Math.sin(age / 300) * 0.08;
         if (age > TORNADO_LIFE_MS) this.remove(h.hid);
+        continue;
+      }
+      if (h.kind === 'blueshell') {
+        // Fly up the track over everyone's heads, then dive onto the target.
+        const tg = kart(h.tg);
+        if (!tg || age > 20000) {
+          this.remove(h.hid);
+          continue;
+        }
+        if (!h.homing) {
+          h.prog += (BLUE_SPEED * dt) / t.spacing;
+          const N = t.N;
+          const tgFrac = (((tg.p % N) + N) % N);
+          const ahead = (((tgFrac - h.prog) % N) + N) % N;
+          if (ahead < 14 || ahead > N - 3) h.homing = true;
+          const i = t.wrap(Math.floor(h.prog));
+          h.x = t.px[i];
+          h.z = t.pz[i];
+          h.y = t.heightAt(h.prog) + 6;
+        } else {
+          const dx = tg.x - h.x;
+          const dy = (tg.y || 0) + 0.8 - h.y;
+          const dz = tg.z - h.z;
+          const d = Math.hypot(dx, dy, dz);
+          if (d < 2.2) {
+            this.explode(h.hid);
+            continue;
+          }
+          const step = Math.min(d, 58 * dt);
+          h.x += (dx / d) * step;
+          h.y += (dy / d) * step;
+          h.z += (dz / d) * step;
+        }
+        h.mesh.position.set(h.x, h.y, h.z);
+        h.mesh.rotation.y += dt * 6;
+        const flap = Math.sin(now / 60) * 0.6;
+        h.mesh.userData.wings[0].rotation.z = flap;
+        h.mesh.userData.wings[1].rotation.z = -flap;
+        continue;
+      }
+      if (h.kind === 'boomerang') {
+        // Out in a curve, then back to whoever threw it.
+        if (age < 800) {
+          const c = Math.cos(1.6 * dt);
+          const sn = Math.sin(1.6 * dt);
+          const vx = h.vx * c - h.vz * sn;
+          h.vz = h.vx * sn + h.vz * c;
+          h.vx = vx;
+          h.x += h.vx * dt;
+          h.z += h.vz * dt;
+        } else {
+          const o = kart(h.owner);
+          if (!o) {
+            this.remove(h.hid);
+            continue;
+          }
+          const dx = o.x - h.x;
+          const dz = o.z - h.z;
+          const d = Math.hypot(dx, dz);
+          if (d < 2.5 || age > 5000) {
+            this.remove(h.hid); // caught
+            continue;
+          }
+          const step = Math.min(d, (BOOMERANG_SPEED + 6) * dt);
+          h.x += (dx / d) * step;
+          h.z += (dz / d) * step;
+        }
+        const n = t.nearest(h.x, h.z, h.idx);
+        h.idx = n.idx;
+        h.y = t.heightAt(n.frac);
+        h.mesh.position.set(h.x, h.y, h.z);
+        h.mesh.userData.spin.rotation.y += dt * 18;
         continue;
       }
       if (h.kind === 'bomb') {
@@ -318,6 +454,16 @@ export class Hazards {
   // Bananas and shells are used up; tornadoes keep going; bombs explode.
   collide(kartId, x, y, z, now) {
     for (const h of this.list.values()) {
+      if (h.kind === 'blueshell') continue; // only explodes on its target
+      if (h.kind === 'boomerang') {
+        // Hits everyone it passes (once each), never its thrower.
+        if (h.owner === kartId || h.hits.has(kartId)) continue;
+        if (Math.abs(y - h.y) < 2 && (h.x - x) ** 2 + (h.z - z) ** 2 < 2.1 * 2.1) {
+          h.hits.add(kartId);
+          return { h, effect: 'spin', keep: true };
+        }
+        continue;
+      }
       const immune = h.kind === 'tornado' ? 1500 : 700;
       if (h.owner === kartId && now - h.born < immune) continue;
       if (h.kind === 'tornado') {

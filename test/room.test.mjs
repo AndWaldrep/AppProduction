@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import { Room, makeCode } from '../docs/js/room.js';
+import { packKart, unpackKart } from '../docs/js/proto.js';
 
 // A fake connection that records what the room sends it.
 function conn(room) {
@@ -64,11 +65,13 @@ test('create, invite, race, finish and results', () => {
   assert.ok(start.startAt > Date.now());
 
   // State relay: host may send its own kart and the bots, but not the guest's kart.
-  host.say({ t: 's', k: [{ id: hw.id, ts: 1, x: 1, z: 2, h: 0, p: 5, md: 5 }, { id: 'bot0', ts: 1, x: 3, z: 4, p: 7, md: 99 }, { id: gw.id, x: 99 }] });
-  const relayed = guest.take('s').k;
+  host.say({ t: 's', k: [packKart({ id: hw.id, ts: 1, x: 1, z: 2, h: 0, p: 5, md: 5 }), packKart({ id: 'bot0', ts: 1, x: 3, z: 4, p: 7, md: 99 }), packKart({ id: gw.id, x: 99 })] });
+  room.flushStates();
+  const relayed = guest.take('s').k.map(unpackKart);
   assert.deepStrictEqual(relayed.map((k) => k.id), [hw.id, 'bot0']);
   assert.deepStrictEqual(relayed.map((k) => k.md), [5, 3], 'power-up flags are relayed (and kept to known bits)');
-  guest.say({ t: 's', k: [{ id: 'bot1', x: 5 }] });
+  guest.say({ t: 's', k: [packKart({ id: 'bot1', x: 5 })] });
+  room.flushStates();
   assert.ok(!host.inbox.some((m) => m.t === 's'), 'guests cannot move CPU karts');
 
   // Item events are relayed to everyone else, with only known fields.
@@ -99,7 +102,7 @@ test('a dropped phone can take its seat back, even mid-race', () => {
   guest.say({ t: 'join', code: 'WXYZ', name: 'B' });
   const gw = guest.take('welcome');
   host.say({ t: 'startRace' });
-  guest.say({ t: 's', k: [{ id: gw.id, x: 10, z: 20, h: 1, p: 33 }] });
+  guest.say({ t: 's', k: [packKart({ id: gw.id, x: 10, z: 20, h: 1, p: 33 })] });
 
   room.detach(guest);
   assert.strictEqual(host.last('room').players.find((p) => p.id === gw.id).connected, false);
@@ -177,14 +180,14 @@ test('TV mode: the big screen hosts and shows everyone; phones still play', () =
   assert.strictEqual(room.state, 'lobby');
 
   const phones = [];
-  for (const name of ['Ann', 'Bo', 'Cy', 'Di']) {
+  for (const name of ['Ann', 'Bo', 'Cy', 'Di', 'Ed', 'Flo', 'Gus', 'Hal']) {
     const c = conn(room);
     c.say({ t: 'join', code: 'TVTV', name });
     phones.push({ c, id: c.take('welcome').id });
   }
   const extra = conn(room);
-  extra.say({ t: 'join', code: 'TVTV', name: 'Ed' });
-  assert.strictEqual(extra.take('error').code, 'full', 'split screen fits four players');
+  extra.say({ t: 'join', code: 'TVTV', name: 'Ivy' });
+  assert.strictEqual(extra.take('error').code, 'full', 'split screen fits eight players');
   assert.ok(!tv.last('room').players.slice(1).some((p) => p.color === '#ffffff'), 'the TV does not use up a kart color');
 
   // Anyone on the couch can change settings and start.
@@ -194,15 +197,49 @@ test('TV mode: the big screen hosts and shows everyone; phones still play', () =
   assert.deepStrictEqual(start.karts.filter((k) => !k.bot).map((k) => k.id).sort(), phones.map((p) => p.id).sort(), 'the TV is not a racer');
 
   // Each phone drives its own kart and the TV sees it; the TV drives only the CPUs.
-  phones[2].c.say({ t: 's', k: [{ id: phones[2].id, x: 4, p: 3, it: 6, u: 1 }] });
-  const seen = tv.take('s').k[0];
+  phones[2].c.say({ t: 's', k: [packKart({ id: phones[2].id, x: 4, p: 3, it: 6, u: 1 })] });
+  room.flushStates();
+  const seen = unpackKart(tv.take('s').k[0]);
   assert.strictEqual(seen.id, phones[2].id);
   assert.strictEqual(seen.it, 6, 'item shown on the TV');
-  tv.say({ t: 's', k: [{ id: 'bot0', x: 1 }, { id: phones[0].id, x: 99 }] });
-  assert.deepStrictEqual(phones[1].c.take('s', (m) => m.k[0].id === 'bot0').k.map((k) => k.id), ['bot0'], 'the TV cannot move a phone player\'s kart');
+  tv.say({ t: 's', k: [packKart({ id: 'bot0', x: 1 }), packKart({ id: phones[0].id, x: 99 })] });
+  room.flushStates();
+  assert.deepStrictEqual(phones[1].c.take('s', (m) => m.k[0][0] === 'bot0').k.map((a) => a[0]), ['bot0'], 'the TV cannot move a phone player\'s kart');
 
+  tv.say({ t: 's', k: phones.map((p, i) => packKart({ id: p.id, p: i })) });
   phones.forEach((p, i) => p.c.say({ t: 'finish', id: p.id, time: 40 + i }));
   const results = tv.take('results');
-  assert.deepStrictEqual(results.standings.slice(0, 4).map((s) => s.id), phones.map((p) => p.id));
+  assert.deepStrictEqual(results.standings.slice(0, 8).map((s) => s.id), phones.map((p) => p.id));
+  room.close();
+});
+
+test('8 players: positions go out bundled, and a backed-up link skips a beat', () => {
+  const room = new Room('EEEE');
+  const host = conn(room);
+  host.say({ t: 'create', name: 'H' });
+  const guests = [];
+  for (let i = 0; i < 7; i++) {
+    const c = conn(room);
+    c.say({ t: 'join', code: 'EEEE', name: 'G' + i });
+    guests.push({ c, id: c.take('welcome').id });
+  }
+  host.say({ t: 'startRace' });
+  for (const g of guests) g.c.inbox.length = 0;
+  // Everyone reports a position (some twice) before the next bundle goes out.
+  host.say({ t: 's', k: [packKart({ id: room.hostId, x: 1 })] });
+  for (const g of guests) {
+    g.c.say({ t: 's', k: [packKart({ id: g.id, x: 1 })] });
+    g.c.say({ t: 's', k: [packKart({ id: g.id, x: 2 })] });
+  }
+  assert.ok(!guests[0].c.inbox.some((m) => m.t === 's'), 'nothing is forwarded one by one');
+  // One guest's link is backed up.
+  guests[3].c.dataChannel = { bufferedAmount: 200000 };
+  room.flushStates();
+  const got = guests[0].c.inbox.filter((m) => m.t === 's');
+  assert.strictEqual(got.length, 1, 'one bundle per tick');
+  assert.strictEqual(got[0].k.length, 7, 'everyone else: the host and 6 other guests');
+  assert.ok(!got[0].k.some((a) => a[0] === guests[0].id), 'not your own kart');
+  assert.strictEqual(unpackKart(got[0].k.find((a) => a[0] === guests[1].id)).x, 2, 'the latest position');
+  assert.ok(!guests[3].c.inbox.some((m) => m.t === 's'), 'backed-up link skipped');
   room.close();
 });

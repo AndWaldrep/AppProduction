@@ -361,6 +361,14 @@ class Sound {
     } else if (kind === 'bomb') {
       this.tone(260, 0.15, { type: 'triangle', vol: 0.3, slide: 520 });
       this.noise(0.08, { vol: 0.2, type: 'lowpass', f: 600 });
+    } else if (kind === 'blueshell') {
+      // A rising siren as it takes off for the leader.
+      this.tone(500, 0.9, { type: 'sawtooth', vol: 0.12, slide: 1400 });
+      this.tone(520, 0.9, { type: 'square', vol: 0.06, slide: 1450, delay: 0.05 });
+      this.noise(0.8, { vol: 0.3, f: 600, slide: 3000 });
+    } else if (kind === 'boomerang') {
+      this.noise(0.5, { vol: 0.3, f: 1200, q: 6 });
+      this.tone(700, 0.3, { type: 'triangle', vol: 0.12, slide: 400 });
     } else if (kind === 'star') {
       this.notes([523, 659, 784, 1046, 1318, 1568, 2093], { vol: 0.12, gap: 0.05, dur: 0.12 });
     }

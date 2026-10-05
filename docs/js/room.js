@@ -1,3 +1,5 @@
+import { packKart, unpackKart, congested } from './proto.js';
+
 // The race room. It runs inside the host's browser: the host's phone keeps the
 // lobby, the shared race start time, finish order and results, and relays each
 // phone's kart data to the others. Guests reach it over a peer-to-peer link.
@@ -5,12 +7,13 @@
 // A connection is any object with send(msg) and close().
 
 const MAX_PLAYERS = 8;
-const MAX_TV_PLAYERS = 4; // TV mode: the big screen splits into one view per player
+const MAX_TV_PLAYERS = 8; // TV mode: the big screen splits into one view per player
 const MAX_KARTS = 8;
 const LOBBY_GRACE_MS = 3 * 60 * 1000; // keep a player's seat while they're away from the game
 const RACE_GRACE_MS = 3 * 60 * 1000;
-const RESULTS_TIMEOUT_MS = 30 * 1000; // after the first human finishes
+export const RESULTS_TIMEOUT_MS = 60 * 1000; // after the first human finishes (big games need room for stragglers)
 const COUNTDOWN_MS = 4500;
+const STATE_TICK_MS = 66; // positions go out in one bundle ~15 times a second
 const SILENT_MS = 25 * 1000; // a guest that sent nothing for this long has lost its connection
 const TRACKS = ['sunny', 'desert', 'frosty'];
 const BOT_NAMES = ['Turbo', 'Zippy', 'Blaze', 'Nitro', 'Dash', 'Comet', 'Rocket', 'Pixel'];
@@ -50,6 +53,8 @@ export class Room {
     this.closed = false;
     this.tv = false; // TV mode: the host is a big screen showing everyone's view, not a racer
     this.watchdog = setInterval(() => this.checkSilent(), 3000);
+    this.dirty = new Set(); // karts that moved since the last bundle
+    this.ticker = null;
   }
 
   // ------------------------------------------------------------ connections
@@ -95,6 +100,7 @@ export class Room {
   close() {
     this.closed = true;
     clearInterval(this.watchdog);
+    clearInterval(this.ticker);
     clearTimeout(this.resultsTimer);
     for (const p of this.players.values()) clearTimeout(p.dropTimer);
   }
@@ -184,8 +190,31 @@ export class Room {
       finished: [],
       kstate: {},
     };
+    this.dirty.clear();
+    clearInterval(this.ticker);
+    this.ticker = setInterval(() => this.flushStates(), STATE_TICK_MS);
     this.broadcast(this.startInfo());
     this.pushRoom();
+  }
+
+  // Send everyone the karts that moved since last time, in one message, leaving out
+  // their own karts. A player whose link is backed up skips a beat instead of piling
+  // up more. (Before, every player's update was forwarded to everyone separately:
+  // with 8 players that was over 700 messages a second through the host.)
+  flushStates() {
+    if (!this.race || this.state !== 'racing' || this.dirty.size === 0) return;
+    const ids = [...this.dirty];
+    this.dirty.clear();
+    for (const p of this.players.values()) {
+      if (!p.conn || congested(p.conn)) continue;
+      const k = [];
+      for (const id of ids) {
+        if (id === p.id || (p.id === this.hostId && id.startsWith('bot'))) continue;
+        const st = this.race.kstate[id];
+        if (st) k.push(packKart(st));
+      }
+      if (k.length) this.send(p.conn, { t: 's', k });
+    }
   }
 
   maybeEndRace() {
@@ -210,6 +239,7 @@ export class Room {
       ...rest.map((k) => ({ ...k, time: null })),
     ];
     this.state = 'results';
+    clearInterval(this.ticker);
     for (const p of this.players.values()) p.inRace = false;
     this.broadcast({ t: 'results', standings });
     this.pushRoom();
@@ -293,25 +323,19 @@ export class Room {
       case 's': {
         // Kart state, ~15 times a second. Remember progress for standings and relay.
         if (this.state !== 'racing' || !(player.inRace || (this.tv && isHost)) || !Array.isArray(msg.k)) return;
-        const out = [];
-        for (const k of msg.k.slice(0, MAX_KARTS)) {
+        for (const a of msg.k.slice(0, MAX_KARTS)) {
+          const k = unpackKart(a);
           if (!k || !this.ownsKart(player, k.id)) continue;
-          const clean = {
-            id: k.id, ts: num(k.ts), x: num(k.x), z: num(k.z), h: num(k.h), s: num(k.s), p: num(k.p),
-            sp: num(k.sp), st: num(k.st), b: num(k.b), dd: num(k.dd), dc: num(k.dc), hop: num(k.hop),
-            y: num(k.y), pt: num(k.pt), tr: num(k.tr), md: num(k.md) & 7, it: num(k.it), u: num(k.u),
-          };
-          this.race.kstate[k.id] = clean;
-          out.push(clean);
+          this.race.kstate[k.id] = k;
+          this.dirty.add(k.id);
         }
-        if (out.length) this.broadcast({ t: 's', k: out }, player.id);
         return;
       }
       case 'e': {
         // Item events (box taken, item spawned, item hit).
         if (this.state !== 'racing') return;
         const ev = { t: 'e', type: String(msg.type), from: player.id };
-        for (const key of ['i', 'hid', 'kind', 'x', 'z', 'vx', 'vz', 'owner']) {
+        for (const key of ['i', 'hid', 'kind', 'x', 'z', 'vx', 'vz', 'owner', 'dir', 'tg', 'v', 'a', 'w']) {
           if (msg[key] !== undefined) ev[key] = typeof msg[key] === 'number' ? num(msg[key]) : String(msg[key]).slice(0, 40);
         }
         this.broadcast(ev, player.id);

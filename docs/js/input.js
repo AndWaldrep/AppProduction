@@ -63,13 +63,39 @@ export class Input {
     };
     hold('btnDrift', () => (this.touchDrift = true), () => (this.touchDrift = false));
     hold('btnBrake', () => (this.touchBrake = true), () => (this.touchBrake = false));
-    hold('btnItem', () => (this.itemQueued = true));
+    // ITEM: tap to use; swipe down to throw behind you, swipe up to throw ahead.
+    const item = document.getElementById('btnItem');
+    let press = null;
+    item.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      item.setPointerCapture(e.pointerId);
+      item.classList.add('pressed');
+      press = { id: e.pointerId, y: e.clientY, done: false };
+    });
+    item.addEventListener('pointermove', (e) => {
+      if (!press || e.pointerId !== press.id || press.done) return;
+      const dy = e.clientY - press.y;
+      if (Math.abs(dy) > 26) {
+        press.done = true;
+        this.itemQueued = dy > 0 ? 'back' : 'fwd';
+        item.classList.add(dy > 0 ? 'swipe-back' : 'swipe-fwd');
+      }
+    });
+    const release = (e) => {
+      if (!press || e.pointerId !== press.id) return;
+      if (!press.done && e.type === 'pointerup') this.itemQueued = 'tap';
+      press = null;
+      item.classList.remove('pressed', 'swipe-back', 'swipe-fwd');
+    };
+    item.addEventListener('pointerup', release);
+    item.addEventListener('pointercancel', release);
 
     window.addEventListener('keydown', (e) => {
       if (e.target instanceof HTMLInputElement) return;
       const k = e.key.toLowerCase();
       if (['arrowleft', 'arrowright', 'arrowup', 'arrowdown', ' '].includes(k)) e.preventDefault();
-      if (!e.repeat && ['shift', 'e', 'x', 'enter'].includes(k)) this.itemQueued = true;
+      if (!e.repeat && ['shift', 'e', 'x', 'enter'].includes(k)) this.itemQueued = this.keys.has('arrowdown') || this.keys.has('s') ? 'back' : this.keys.has('arrowup') || this.keys.has('w') ? 'fwd' : 'tap';
+      if (!e.repeat && ['q', 'z'].includes(k)) this.itemQueued = 'back';
       this.keys.add(k);
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.key.toLowerCase()));
@@ -85,7 +111,7 @@ export class Input {
     let keySteer = 0;
     if (k.has('arrowleft') || k.has('a')) keySteer -= 1;
     if (k.has('arrowright') || k.has('d')) keySteer += 1;
-    const useItem = this.itemQueued;
+    const useItem = this.itemQueued; // false, 'tap', 'fwd' or 'back'
     this.itemQueued = false;
     return {
       steer: keySteer || this.touchSteer,

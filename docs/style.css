@@ -409,3 +409,48 @@ body.tv #minimap { top: 50%; left: 50%; right: auto; transform: translate(-50%, 
 .tvView.overview .tvTop { display: none; }
 
 .players li.empty { justify-content: center; color: var(--muted); font-style: italic; }
+.ctl.item { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+.ctl.item small { font-size: 10px; opacity: 0.8; font-weight: 700; }
+.ctl.item.swipe-back { transform: translateY(14px) scale(0.92); }
+.ctl.item.swipe-fwd { transform: translateY(-14px) scale(0.92); }
+#itemIcon.blue, .tvItem span.blue { filter: hue-rotate(95deg) saturate(2.2) brightness(0.95); }
+
+/* Live announcements, tucked under the position so they don't cover the road */
+#feed {
+  position: absolute;
+  left: calc(10px + var(--safe-l));
+  top: calc(66px + var(--safe-t));
+  max-width: min(46vw, 320px);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  pointer-events: none;
+}
+.feedLine {
+  align-self: flex-start;
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: 8px;
+  padding: 3px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  animation: feedIn 0.2s ease-out;
+  transition: opacity 0.5s;
+}
+.feedLine b { text-shadow: 0 0 2px #000, 0 0 2px #000; }
+.feedLine .blue { filter: hue-rotate(95deg) saturate(2.2); display: inline-block; }
+.feedLine.gone { opacity: 0; }
+@keyframes feedIn { from { transform: translateX(-12px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (orientation: portrait) { #feed { top: calc(118px + var(--safe-t)); } }
+body.tv #feed { left: 50%; top: auto; bottom: 12px; transform: translateX(-50%); align-items: center; max-width: 60vw; }
+body.tv .feedLine { font-size: 18px; align-self: center; }
+#tvHud.small .tvPos { font-size: 34px; }
+#tvHud.small .tvItem { width: 46px; height: 46px; font-size: 24px; }
+#tvHud.small .tvLap { font-size: 16px; }
+#tvHud.small .tvTime { font-size: 13px; }
+#tvHud.small .tvName { font-size: 12px; }
+#tvHud.small .tvBanner { font-size: 32px; }

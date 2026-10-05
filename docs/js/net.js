@@ -6,6 +6,8 @@
 // everything here reconnects on its own.
 
 import { Room, makeCode } from './room.js';
+import { congested } from './proto.js';
+import { ICE_SERVERS } from './config.js';
 
 const PREFIX = 'kartclash-v1-';
 const GIVE_UP_MS = 90 * 1000; // stop looking for a race we never reached
@@ -16,10 +18,11 @@ const CONNECT_TIMEOUT_MS = 9000;
 
 function peerOptions() {
   // ?peerserver=host:port points at a self-run PeerJS server (used by the tests).
+  const config = { iceServers: ICE_SERVERS, sdpSemantics: 'unified-plan' };
   const custom = new URLSearchParams(location.search).get('peerserver');
-  if (!custom) return { debug: 1 };
+  if (!custom) return { debug: 1, config };
   const [host, port] = custom.split(':');
-  return { host, port: Number(port) || 9000, path: '/', secure: false, debug: 1 };
+  return { host, port: Number(port) || 9000, path: '/', secure: false, debug: 1, config };
 }
 
 const clone = (m) => JSON.parse(JSON.stringify(m));
@@ -36,6 +39,7 @@ export class Net {
     this.pendingJoin = null;
     this.profile = {};
     this.offset = 0; // hostTime - localTime
+    this.stats = { drops: 0, redials: 0, skipped: 0 }; // for checking connection health
     this.samples = [];
     this.active = false;
     document.addEventListener('visibilitychange', () => {
@@ -105,6 +109,15 @@ export class Net {
         this.conn.send(msg);
       } catch {}
     }
+  }
+
+  // Kart positions: if the link is backed up, skip this one (a newer one follows shortly).
+  sendState(msg) {
+    if (this.role === 'guest' && congested(this.conn)) {
+      this.stats.skipped++;
+      return;
+    }
+    this.send(msg);
   }
 
   deliver(msg) {
@@ -270,6 +283,7 @@ export class Net {
       this.retry();
       return;
     }
+    this.stats.redials++;
     const dc = peer.connect(PREFIX + this.code, { reliable: true, serialization: 'json' });
     clearTimeout(this.connectTimer);
     this.connectTimer = setTimeout(() => {
@@ -320,6 +334,7 @@ export class Net {
     });
     const lost = () => {
       if (this.conn !== dc) return;
+      this.stats.drops++;
       this.conn = null;
       clearInterval(this.pingTimer);
       this.searchStart = Date.now();
