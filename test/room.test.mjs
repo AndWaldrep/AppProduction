@@ -243,3 +243,19 @@ test('8 players: positions go out bundled, and a backed-up link skips a beat', (
   assert.ok(!guests[3].c.inbox.some((m) => m.t === 's'), 'backed-up link skipped');
   room.close();
 });
+
+test("the host's own screen gets positions right away (no waiting for the next bundle)", () => {
+  const room = new Room('LIVE');
+  const host = conn(room);
+  host.local = true; // the host's screen is on the same device as the room
+  host.say({ t: 'create', name: 'TV', tv: true });
+  const phone = conn(room);
+  phone.say({ t: 'join', code: 'LIVE', name: 'Ann' });
+  const id = phone.take('welcome').id;
+  phone.say({ t: 'startRace' });
+  phone.say({ t: 's', k: [packKart({ id, x: 7 })] });
+  assert.strictEqual(unpackKart(host.take('s').k[0]).x, 7, 'delivered immediately');
+  room.flushStates();
+  assert.ok(!host.inbox.some((m) => m.t === 's'), 'not sent a second time in the bundle');
+  room.close();
+});

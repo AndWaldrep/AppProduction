@@ -206,7 +206,7 @@ export class Room {
     const ids = [...this.dirty];
     this.dirty.clear();
     for (const p of this.players.values()) {
-      if (!p.conn || congested(p.conn)) continue;
+      if (!p.conn || p.conn.local || congested(p.conn)) continue; // the host's screen already has them
       const k = [];
       for (const id of ids) {
         if (id === p.id || (p.id === this.hostId && id.startsWith('bot'))) continue;
@@ -323,12 +323,18 @@ export class Room {
       case 's': {
         // Kart state, ~15 times a second. Remember progress for standings and relay.
         if (this.state !== 'racing' || !(player.inRace || (this.tv && isHost)) || !Array.isArray(msg.k)) return;
+        const fresh = [];
         for (const a of msg.k.slice(0, MAX_KARTS)) {
           const k = unpackKart(a);
           if (!k || !this.ownsKart(player, k.id)) continue;
           this.race.kstate[k.id] = k;
           this.dirty.add(k.id);
+          fresh.push(a);
         }
+        // The host's own screen is on this device: show it right away rather than
+        // waiting for the next bundle (matters most for the TV).
+        const host = this.players.get(this.hostId);
+        if (fresh.length && player !== host && host?.conn?.local) this.send(host.conn, { t: 's', k: fresh });
         return;
       }
       case 'e': {

@@ -17,9 +17,18 @@ export class Input {
     const knob = document.getElementById('stickKnob');
     const RANGE = 55;
 
+    try {
+      if (localStorage.getItem('kc-steered')) document.body.classList.add('steered');
+    } catch {}
     zone.addEventListener('pointerdown', (e) => {
       if (this.stickId !== null) return;
       e.preventDefault();
+      if (!document.body.classList.contains('steered')) {
+        document.body.classList.add('steered');
+        try {
+          localStorage.setItem('kc-steered', '1');
+        } catch {}
+      }
       this.stickId = e.pointerId;
       zone.setPointerCapture(e.pointerId);
       this.stickOrigin = e.clientX;

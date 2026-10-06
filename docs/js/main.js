@@ -14,7 +14,9 @@ import qrcode from '../vendor/qrcode.js';
 
 const COLORS = ['#e53935', '#1e88e5', '#43a047', '#fdd835', '#8e24aa', '#fb8c00', '#00acc1', '#f06292'];
 const SEND_INTERVAL = 1000 / 15;
-const INTERP_DELAY = 120;
+const TV_SEND_INTERVAL = 1000 / 30; // in TV rooms phones update twice as often so the TV keeps up
+const INTERP_DELAY = 100; // draw other karts this far in the past so their movement is smooth
+const TV_INTERP_DELAY = 60; // the TV gets fresher updates, so it can stay closer to live
 const $ = (id) => document.getElementById(id);
 
 // ------------------------------------------------------------------ renderer
@@ -547,7 +549,7 @@ function beginRace(msg) {
   $('itemIcon').textContent = '';
   $('posOf').textContent = '/' + race.karts.size;
   requestWakeLock();
-  if (track.jumps.length) setTimeout(() => app.race === race && toast('Tip: tap DRIFT in mid-air for a trick boost!', 3500), 600);
+  if (track.jumps.length && app.mode !== 'tv') setTimeout(() => app.race === race && showTip('trick', 'Tap DRIFT in mid-air for a trick boost'), 6000);
   if (app.mode !== 'tv' && !race.karts.has(app.myId)) {
     endRaceLocal();
     show('waiting');
@@ -599,6 +601,14 @@ function setupViewers(race, msg) {
   });
   // A spare square in the grid shows a fly-over of the track.
   race.overview = humans.length < cols * rows ? cell(humans.length) : null;
+  // The map goes in the spare square if there is one, otherwise the bottom-right corner.
+  const map = $('minimap');
+  if (race.overview) {
+    const [x, y, w, h] = race.overview;
+    Object.assign(map.style, { left: (x + w / 2) * 100 + '%', top: (y + h / 2) * 100 + '%', right: 'auto', bottom: 'auto', transform: 'translate(-50%, -50%)', width: 'min(36vh, 300px)', height: 'min(36vh, 300px)' });
+  } else {
+    Object.assign(map.style, { left: 'auto', top: 'auto', right: '10px', bottom: '10px', transform: 'none', width: '150px', height: '150px' });
+  }
   if (race.overview) {
     const [x, y, w, h] = race.overview;
     const el = document.createElement('div');
@@ -653,6 +663,7 @@ function endRaceLocal() {
   app.race = null;
   sfx.kart({ on: false });
   $('tvHud').innerHTML = '';
+  $('minimap').removeAttribute('style');
 }
 
 // Keep the screen on while in a room. If a phone auto-locks (iPhones do after 30s
@@ -707,12 +718,26 @@ function rankings(race) {
   return list;
 }
 
-// The first time you get one of the newer items, say what it does.
-const tipsShown = new Set();
+// Tips show once per phone, ever, and during a race they go in the corner feed
+// instead of over the road.
+const tipsShown = new Set((() => {
+  try {
+    return JSON.parse(localStorage.getItem('kc-tips') || '[]');
+  } catch {
+    return [];
+  }
+})());
+function showTip(key, text) {
+  if (tipsShown.has(key)) return;
+  tipsShown.add(key);
+  try {
+    localStorage.setItem('kc-tips', JSON.stringify([...tipsShown]));
+  } catch {}
+  if (app.race) feed(`💡 ${text}`, 'tip');
+  else toast(text, 3500);
+}
 function showItemTip(item) {
-  if (!ITEM_TIPS[item] || tipsShown.has(item)) return;
-  tipsShown.add(item);
-  toast(ITEM_TIPS[item], 3500);
+  if (ITEM_TIPS[item]) showTip(item, ITEM_TIPS[item]);
 }
 
 function spawnHazard(ent, kind, x, z, vx, vz, extra = {}) {
@@ -852,15 +877,16 @@ function feedName(id) {
   const color = e ? e.color : p ? p.color : '#fff';
   return `<b style="color:${color}">${escapeHtml(name)}</b>`;
 }
-function feed(html) {
+function feed(html, cls = '') {
   const box = $('feed');
   const line = document.createElement('div');
-  line.className = 'feedLine';
+  line.className = 'feedLine ' + cls;
   line.innerHTML = html;
   box.appendChild(line);
   while (box.children.length > 5) box.firstChild.remove();
-  setTimeout(() => line.classList.add('gone'), 5000);
-  setTimeout(() => line.remove(), 5600);
+  const ms = cls === 'tip' ? 7000 : 5000;
+  setTimeout(() => line.classList.add('gone'), ms);
+  setTimeout(() => line.remove(), ms + 600);
 }
 function koText({ v, a, w }) {
   const V = feedName(v);
@@ -1067,7 +1093,7 @@ function updateRace(dt, now) {
           if (view) {
             sfx.itemReady();
             if (ITEM_TIPS[ent.item] && !tipsShown.has(ent.item)) showItemTip(ent.item);
-            else if (THROWABLE.has(ent.item)) showItemTip('throw');
+            else if (THROWABLE.has(ent.item)) showTip('throw', ITEM_TIPS.throw);
           }
         } else if (view && now - race.lastTick > 90) {
           race.lastTick = now;
@@ -1131,7 +1157,7 @@ function updateRace(dt, now) {
   }
 
   // Send our karts ~15 times a second.
-  if (now - race.lastSend > SEND_INTERVAL) {
+  if (now - race.lastSend > (app.room?.tv ? TV_SEND_INTERVAL : SEND_INTERVAL)) {
     race.lastSend = now;
     const k = [];
     for (const ent of race.karts.values()) {
@@ -1148,7 +1174,7 @@ function updateRace(dt, now) {
   }
 
   // Remote karts
-  const renderT = sNow - INTERP_DELAY;
+  const renderT = sNow - (app.mode === 'tv' ? TV_INTERP_DELAY : INTERP_DELAY);
   for (const ent of race.karts.values()) {
     if (ent.sim) continue;
     ent.view = remoteView(ent, renderT);

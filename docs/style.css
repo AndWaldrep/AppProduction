@@ -393,7 +393,7 @@ body.tv #inviteBtn, body.tv #smsLink { display: none; }
 #tvHud { display: none; position: absolute; inset: 0; }
 body.tv #tvHud { display: block; }
 body.tv #hudTop, body.tv #controls, body.tv #audioBtns { display: none; }
-body.tv #minimap { top: 50%; left: 50%; right: auto; transform: translate(-50%, -50%); width: 170px; height: 170px; }
+body.tv #minimap { opacity: 0.95; }
 .tvView { position: absolute; border: 2px solid rgba(0, 0, 0, 0.6); box-sizing: border-box; }
 .tvView .tvTop { position: absolute; top: 10px; left: 12px; right: 12px; display: flex; justify-content: space-between; align-items: flex-start; text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.6); font-weight: 900; }
 .tvView .tvPos { font-size: 52px; line-height: 1; font-style: italic; color: var(--accent2); }
@@ -454,3 +454,8 @@ body.tv .feedLine { font-size: 18px; align-self: center; }
 #tvHud.small .tvTime { font-size: 13px; }
 #tvHud.small .tvName { font-size: 12px; }
 #tvHud.small .tvBanner { font-size: 32px; }
+
+.feedLine.tip { background: rgba(255, 196, 0, 0.85); color: #222; font-weight: 700; white-space: normal; }
+/* "drag to steer" fades away once you've got the hang of it */
+.zoneHint { transition: opacity 0.6s; }
+body.steered .zoneHint { opacity: 0; }
